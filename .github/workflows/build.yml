@@ -1,0 +1,158 @@
+# Track matz/spinel master: build the compiler as wasm and the sample
+# programs for wasm32-wasi from the current upstream commit, gate on the
+# Node smoke checks and a headless-browser pass, and deploy to Pages only
+# when both pass. A failed gate leaves the last good deployment in place
+# and opens (or updates) one tracking issue naming the commit and the step.
+name: build
+
+on:
+  schedule:
+    - cron: "17 6 * * *"        # daily; a run with no upstream change is skipped in seconds
+  workflow_dispatch:
+    inputs:
+      spinel_ref:
+        description: "spinel ref to build (default: master)"
+        default: "master"
+      force:
+        description: "build even if the live site is already at this commit"
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+  issues: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  WASI_SDK_VERSION: "34"
+  NODE_VERSION: "24"
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.up.outputs.sha }}
+      changed: ${{ steps.up.outputs.changed }}
+    steps:
+      - id: up
+        run: |
+          ref="${{ github.event.inputs.spinel_ref || 'master' }}"
+          sha=$(git ls-remote https://github.com/matz/spinel.git "refs/heads/$ref" "refs/tags/$ref" "$ref" | head -n1 | cut -f1)
+          if [ -z "$sha" ]; then
+            case "$ref" in [0-9a-f]*) sha="$ref";; *) echo "cannot resolve $ref" >&2; exit 1;; esac
+          fi
+          live=$(curl -sf "https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/version.json" | sed -n 's/.*"spinel_sha": *"\([0-9a-f]*\)".*/\1/p' || true)
+          changed=true
+          if [ "$sha" = "$live" ] && [ "${{ github.event_name }}" = "schedule" ]; then changed=false; fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then changed=true; fi
+          echo "upstream $ref = $sha; live site = ${live:-none}; changed=$changed"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: resolve
+    if: needs.resolve.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ needs.resolve.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: matz/spinel
+          ref: ${{ needs.resolve.outputs.sha }}
+          path: spinel
+          fetch-depth: 0          # tags: `spinel --version` names the release it is past
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install wasi-sdk ${{ env.WASI_SDK_VERSION }}
+        run: |
+          v=${{ env.WASI_SDK_VERSION }}
+          curl -sSL -o /tmp/wasi-sdk.tar.gz "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-$v/wasi-sdk-$v.0-x86_64-linux.tar.gz"
+          sudo mkdir -p /opt && sudo tar xzf /tmp/wasi-sdk.tar.gz -C /opt
+          sudo ln -sfn "/opt/wasi-sdk-$v.0-x86_64-linux" /opt/wasi-sdk
+          /opt/wasi-sdk/bin/clang --version | head -1
+
+      - name: Build spinel (native) and its wasm32-wasi runtime
+        working-directory: spinel
+        run: |
+          make deps
+          make -j"$(nproc)"
+          make -j"$(nproc)" wasm-rt
+          ./spinel --version
+
+      - name: Build the site (spinel.wasm, samples, version.json)
+        run: scripts/build-site.sh spinel _site
+
+      - name: Smoke gate (Node)
+        run: node scripts/smoke.mjs _site spinel
+
+      - name: Browser gate (Playwright)
+        run: |
+          npm init -y >/dev/null
+          npm i --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+          (cd _site && python3 -m http.server 8099 >/tmp/serve.log 2>&1 &)
+          sleep 1
+          SCREENSHOT=/tmp/ide.png node scripts/verify-ide.mjs http://localhost:8099
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ide-screenshot
+          path: /tmp/ide.png
+          if-no-files-found: ignore
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      - name: Close the tracking issue, if one is open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.build.outputs.sha }}
+        run: |
+          for n in $(gh issue list -R "$GITHUB_REPOSITORY" --label tracking-failure --state open --json number -q '.[].number'); do
+            gh issue close "$n" -R "$GITHUB_REPOSITORY" --comment "Green again: deployed matz/spinel@${SHA}."
+          done
+
+  report:
+    # A gate that failed on a scheduled or manual run: one open issue,
+    # updated in place, so a spinel commit that breaks the build is visible
+    # without watching Actions. Filed upstream by a person, if at all.
+    needs: [resolve, build]
+    if: failure() && github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title="build failed against spinel ${SHA:0:8}"
+          body="The tracking build against matz/spinel@${SHA} did not pass its gate. The last good deployment stays up. Run: ${RUN}"
+          n=$(gh issue list -R "$GITHUB_REPOSITORY" --label tracking-failure --state open --json number -q '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" -R "$GITHUB_REPOSITORY" --body "$body"
+            gh issue edit "$n" -R "$GITHUB_REPOSITORY" --title "$title"
+          else
+            gh label create tracking-failure -R "$GITHUB_REPOSITORY" --description "the scheduled spinel build failed its gate" --color d73a4a 2>/dev/null || true
+            gh issue create -R "$GITHUB_REPOSITORY" --label tracking-failure --title "$title" --body "$body"
+          fi

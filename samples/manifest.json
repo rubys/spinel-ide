@@ -1,0 +1,13 @@
+[
+  { "name": "hello",        "label": "hello",                         "file": "hello.rb" },
+  { "name": "point",        "label": "Point — an unboxed class",       "file": "point.rb" },
+  { "name": "widening",     "label": "widening — the slow path",       "file": "widening.rb" },
+  { "name": "refusal",      "label": "refusal — a compile-time limit", "file": "refusal.rb", "norun": true },
+  { "name": "binary_trees", "label": "benchmark: binary trees",        "from": "benchmark/bm_binary_trees.rb" },
+  { "name": "nbody",        "label": "benchmark: n-body (floats)",     "from": "benchmark/bm_nbody.rb" },
+  { "name": "huffman",      "label": "benchmark: huffman",             "from": "benchmark/bm_huffman.rb" },
+  { "name": "micro_lisp",   "label": "benchmark: micro lisp (poly)",   "from": "benchmark/bm_micro_lisp.rb" },
+  { "name": "json_parse",   "label": "benchmark: json parse",          "from": "benchmark/bm_json_parse.rb" },
+  { "name": "life",         "label": "benchmark: life",                "from": "benchmark/bm_life.rb" },
+  { "name": "mandel_term",  "label": "benchmark: mandelbrot (text)",   "from": "benchmark/bm_mandel_term.rb" }
+]
