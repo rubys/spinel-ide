@@ -94,8 +94,8 @@ the list.
 
 Every consumer here — the page, the LSP, the MCP — answers from the JSON
 `--emit-types` writes, and all of them hit the same four limits of it.
-This is the list the upstream request refers to; it will shrink as fields
-land.
+This is the list [matz/spinel#4522](https://github.com/matz/spinel/issues/4522)
+asks about; it will shrink as fields land.
 
 1. **No end position.** A node has a start line and column, no end. On
    `puts pts.map { |p| p.dist2(pts[0]) }.inspect` three nodes start at
@@ -146,7 +146,8 @@ exactly the kind of report that turns into a field in `--emit-types`.
   every refusal report in one run and appear in `--emit-types`.
 - [matz/spinel#4519](https://github.com/matz/spinel/issues/4519) — the
   wasm link on a macOS host; fixed.
-- The `--emit-types` request for the four fields above: not yet filed.
+- [matz/spinel#4522](https://github.com/matz/spinel/issues/4522) — the
+  request for the four fields above.
 
 ## It tracks spinel master
 
