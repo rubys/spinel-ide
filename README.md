@@ -22,6 +22,46 @@ belongs outside the compiler's tree, as roundhouse's
 [`/ide/`](https://rubys.github.io/roundhouse/ide/) is for its analyzer. It
 does not modify spinel; it builds it.
 
+## spinel-mcp and spinel-lsp
+
+Two more consumers of the same output, in [`tools/`](tools/): the
+compiler's answers for an agent (MCP) and for an editor (LSP). Both are
+written in the spinel subset and shared through
+[`tools/spinel_query.rb`](tools/spinel_query.rb), which runs `spinel` on a
+program and answers the type at a position, the diagnostics, the inferred
+signatures and the C a method compiled to. They run either way:
+
+```sh
+ruby tools/spinel-mcp.rb [root]      # CRuby, no compile step
+spinel tools/spinel-mcp.rb -o spinel-mcp && ./spinel-mcp [root]   # a static binary
+```
+
+The daily build compiles both with the fresh spinel, runs one scripted
+session per protocol against the CRuby form and the binary, and requires
+the answers to agree (`scripts/tools-smoke.mjs`); the binaries it built
+(Linux x86-64) are published with the site at `tools/spinel-mcp` and
+`tools/spinel-lsp`. The compiler they run is `$SPINEL`, else `spinel` on
+PATH.
+
+**spinel-mcp** — stdio, stateless; tools `diagnostics`, `wont_compile`,
+`type_at`, `signatures`, `c_for`, `version`. For Claude Code:
+
+```json
+{ "mcpServers": { "spinel": { "command": "ruby", "args": ["/path/to/spinel-ide/tools/spinel-mcp.rb", "."] } } }
+```
+
+**spinel-lsp** — read-only: diagnostics (refusals as errors, widenings as
+warnings), hover (the inferred type), inlay hints (the inferred signature
+after each `def`), code lenses (fast path / slow path per `def`). Any
+LSP-capable editor points at it; a buffer is analyzed by writing it beside
+its file so `require_relative` resolves. Analysis is synchronous in this
+MVP, which is right for programs spinel compiles in tens of milliseconds
+and wrong for a whole application.
+
+Both are bounded by what `--emit-types` says: a start position per node,
+no end, no node kind, and a widening reported at its `def` rather than at
+the slot. That is the gap they exist to demonstrate.
+
 ## It tracks spinel master
 
 A [scheduled workflow](.github/workflows/build.yml) runs daily:
@@ -60,7 +100,8 @@ The footer of the page names the spinel commit it was built from.
 | `site/lib/editor.js` | Monaco via CDN with a textarea fallback; the hover resolves spinel's start-keyed types to the word under the cursor |
 | `site/lib/wasi/` | vendored [@bjorn3/browser_wasi_shim](https://github.com/bjorn3/browser_wasi_shim) 0.4.2 (MIT/Apache-2.0) |
 | `samples/` | the hand-written samples and the manifest; benchmark entries point into the spinel checkout |
-| `scripts/` | the build and the two gates |
+| `tools/` | `spinel_query.rb` (the query core), `spinel-mcp.rb`, `spinel-lsp.rb` — subset Ruby, run by CRuby or compiled by spinel |
+| `scripts/` | the build and the three gates (`smoke.mjs`, `verify-ide.mjs`, `tools-smoke.mjs`) |
 
 Built, not committed: `lib/spinel.wasm`, `lib/clang/` (the toolchain, from
 the npm tarball pinned in `scripts/build-site.sh`), `lib/rt.tar`,
@@ -81,8 +122,9 @@ open http://localhost:8099/ide/
 
 ## What it does not do yet
 
-- Completion, go-to-definition, `why` a slot widened: the compiler does not
-  answer those yet (`why` is matz's to design, per #4509).
+- Completion, go-to-definition, rename, `why` a slot widened: the compiler
+  does not answer those yet (`why` is matz's to design, per #4509; the
+  others need node kinds, spans and resolved callees in `--emit-types`).
 - Programs larger than a benchmark: a whole-app compile belongs in the
   native compiler, not a tab.
 - `Fiber`, `Thread`, sockets, processes: what the wasm32-wasi target does

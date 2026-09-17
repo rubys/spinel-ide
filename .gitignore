@@ -4,3 +4,4 @@ package.json
 package-lock.json
 spinel/
 *.png
+_bin/

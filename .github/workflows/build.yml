@@ -96,6 +96,15 @@ jobs:
       - name: Smoke gate (Node)
         run: node scripts/smoke.mjs _site spinel
 
+      - name: Compile spinel-mcp and spinel-lsp with spinel, gate them under CRuby and compiled
+        run: |
+          ruby --version            # the runner's CRuby, for the no-compile form of the tools
+          mkdir -p _site/tools
+          spinel/spinel tools/spinel-mcp.rb -o _site/tools/spinel-mcp
+          spinel/spinel tools/spinel-lsp.rb -o _site/tools/spinel-lsp
+          node scripts/tools-smoke.mjs spinel/spinel _site/tools
+          cp tools/*.rb _site/tools/
+
       - name: Browser gate (Playwright)
         run: |
           npm init -y >/dev/null
