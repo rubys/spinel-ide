@@ -19,6 +19,7 @@ set -euo pipefail
 
 SPINEL=$(cd "${1:?spinel checkout}" && pwd)
 OUT=${2:?out dir}
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 
 rm -rf "$OUT"

@@ -17,6 +17,9 @@ set -euo pipefail
 
 SPINEL=${1:?spinel checkout}
 OUT=${2:?output .wasm}
+# The compile runs from inside the checkout; the output path must survive that.
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
+mkdir -p "$(dirname "$OUT")"
 WASI_SDK=${WASI_SDK:-${WASI_SDK_PATH:-/opt/wasi-sdk}}
 CLANG="$WASI_SDK/bin/clang"
 [ -x "$CLANG" ] || { echo "no wasi-sdk clang at $CLANG (set WASI_SDK)" >&2; exit 1; }
