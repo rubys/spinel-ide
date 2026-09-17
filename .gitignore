@@ -5,3 +5,4 @@ package-lock.json
 spinel/
 *.png
 _bin/
+editors/vscode/node_modules/

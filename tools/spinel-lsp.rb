@@ -17,6 +17,10 @@
 # per node, no end, no node kind; hover resolves to the word under the
 # cursor, and a widening is reported at its `def`. Columns are treated as
 # characters (UTF-16 units and bytes agree for ASCII).
+#
+# SPINEL_LSP_LOG=<path> appends one line per message in and out (method,
+# id, and for an analysis its timing and counts): what to attach to a
+# report about an editor that does not show what it should.
 require "json"
 require_relative "spinel_query"
 
@@ -27,6 +31,12 @@ module SpinelLSP
       @docs = {}       # uri -> text
       @snaps = {}      # uri -> Snapshot
       @shutdown = false
+      @log = ENV["SPINEL_LSP_LOG"]
+    end
+
+    def log(line)
+      return if @log.nil? || @log.empty?
+      File.open(@log, "a") { |f| f.puts("#{Time.now.strftime('%H:%M:%S')} #{line}") }
     end
 
     # ---- transport: Content-Length framed JSON over stdio ----
@@ -59,6 +69,7 @@ module SpinelLSP
     end
 
     def send(obj)
+      log("-> #{obj['method'] || 'response'} id=#{obj['id'].inspect}#{obj['error'] ? ' error=' + obj['error']['message'] : ''}")
       body = JSON.generate(obj)
       @out.write("Content-Length: #{body.bytesize}\r\n\r\n")
       @out.write(body)
@@ -83,6 +94,7 @@ module SpinelLSP
       id = msg["id"]
       method = msg["method"].to_s
       params = msg["params"] || {}
+      log("<- #{method} id=#{id.inspect}")
       case method
       when "initialize"
         reply(id, {
@@ -139,6 +151,7 @@ module SpinelLSP
       return if text.nil?
       snap = @runner.analyze(path_of(uri), text)
       @snaps[uri] = snap
+      log("   analyzed #{path_of(uri)}: #{snap.types.length} types, #{snap.diagnostics.length} diagnostics, rc=#{snap.rc}, #{snap.elapsed_ms} ms")
       diags = snap.diagnostics.map do |d|
         line = [d["line"].to_i - 1, 0].max
         col = d["col"].to_i

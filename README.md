@@ -52,15 +52,101 @@ PATH.
 
 **spinel-lsp** — read-only: diagnostics (refusals as errors, widenings as
 warnings), hover (the inferred type), inlay hints (the inferred signature
-after each `def`), code lenses (fast path / slow path per `def`). Any
-LSP-capable editor points at it; a buffer is analyzed by writing it beside
-its file so `require_relative` resolves. Analysis is synchronous in this
-MVP, which is right for programs spinel compiles in tens of milliseconds
-and wrong for a whole application.
+after each `def`), code lenses (fast path / slow path per `def`). A buffer
+is analyzed by writing it beside its file so `require_relative` resolves.
+Analysis is synchronous in this MVP, which is right for programs spinel
+compiles in tens of milliseconds and wrong for a whole application.
+`SPINEL_LSP_LOG=<path>` traces every message, which is what to attach to
+a report.
 
-Both are bounded by what `--emit-types` says: a start position per node,
-no end, no node kind, and a widening reported at its `def` rather than at
-the slot. That is the gap they exist to demonstrate.
+Editor setup:
+
+- **VS Code**: [`editors/vscode/`](editors/vscode/) is a thin client
+  (verified on VS Code 1.136). Run it from source —
+  `cd editors/vscode && npm install`, then
+  `code --extensionDevelopmentPath=/path/to/spinel-ide/editors/vscode` —
+  or package it with `npx @vscode/vsce package` and install the `.vsix`.
+  Settings: `spinel.lsp.command` (default: this checkout's
+  `tools/spinel-lsp.rb` under `ruby`) and `spinel.compiler` (the spinel
+  binary; default: `spinel` on PATH).
+- **Neovim** (0.10+), in `init.lua`:
+  ```lua
+  vim.api.nvim_create_autocmd("FileType", { pattern = "ruby", callback = function()
+    vim.lsp.start({ name = "spinel", cmd = { "ruby", "/path/to/spinel-ide/tools/spinel-lsp.rb" } })
+  end })
+  ```
+- **Helix**, in `languages.toml`:
+  ```toml
+  [language-server.spinel]
+  command = "ruby"
+  args = ["/path/to/spinel-ide/tools/spinel-lsp.rb"]
+  [[language]]
+  name = "ruby"
+  language-servers = ["spinel"]
+  ```
+  (The Neovim and Helix snippets are the standard forms; only the VS Code
+  client has been exercised so far — a report from either is welcome.)
+
+Both tools are bounded by what `--emit-types` says; the section below is
+the list.
+
+## What the compiler doesn't say yet
+
+Every consumer here — the page, the LSP, the MCP — answers from the JSON
+`--emit-types` writes, and all of them hit the same four limits of it.
+This is the list the upstream request refers to; it will shrink as fields
+land.
+
+1. **No end position.** A node has a start line and column, no end. On
+   `puts pts.map { |p| p.dist2(pts[0]) }.inspect` three nodes start at
+   `pts` — the local read, the `map` call, the `inspect` call — so a hover
+   there shows `Array[untyped] · Array[Integer] · String` and cannot say
+   which is which. With spans, a hover shows the type of exactly the
+   expression under the cursor.
+2. **No node kind or name.** An entry is a position and a type, so nothing
+   here can tell an identifier from a literal or find the other uses of
+   `pts`. Go-to-definition, references and rename all wait on this.
+3. **A widening names the method, not the slot.** *"`dist2` has a
+   parameter or return widened to untyped"* is stamped at the `def`; the
+   marker sits there, and the user reads the RBS to work out that it was
+   `o`. With the slot and its position, the marker lands on `o`.
+4. **Codegen's decisions are invisible.** Whether a call became a direct C
+   call, a switch over the receiver's classes or a boxed send, and whether
+   a block was inlined, is knowable only from the emitted C, which nobody
+   reads. Per-node `dispatch`/`inlined` fields would give an editor the
+   performance lens no other Ruby tool can have.
+
+Not on this list, because no dump can provide it until the analyzer
+records it: *why* a slot widened — matz's own design, per #4509.
+
+## Reporting what you see
+
+Reports go to [this repository's issues](https://github.com/rubys/spinel-ide/issues);
+the compiler-side conversation is on matz/spinel and is linked under
+Status below. A useful report has:
+
+- the program (paste it — the page's URL carries the sample name, not an
+  edit), or the sample name if unedited;
+- where you hovered or what you pressed, what you got, and what you
+  expected;
+- the spinel commit, from the page's footer or
+  [`version.json`](https://rubys.github.io/spinel-ide/version.json), or
+  `spinel --version` for the tools;
+- for the LSP, the editor and the `SPINEL_LSP_LOG` trace.
+
+"I expected the type of the whole expression and got three candidates" is
+exactly the kind of report that turns into a field in `--emit-types`.
+
+## Status with the compiler
+
+- [matz/spinel#4509](https://github.com/matz/spinel/issues/4509) — the
+  RFC this repository answers: matz declined an in-tree IDE, LSP and MCP
+  ("anyone is free to build any of them out of tree over what the
+  compiler emits"), built `--target=wasm32-wasi` within a day, and made
+  every refusal report in one run and appear in `--emit-types`.
+- [matz/spinel#4519](https://github.com/matz/spinel/issues/4519) — the
+  wasm link on a macOS host; fixed.
+- The `--emit-types` request for the four fields above: not yet filed.
 
 ## It tracks spinel master
 
@@ -101,6 +187,7 @@ The footer of the page names the spinel commit it was built from.
 | `site/lib/wasi/` | vendored [@bjorn3/browser_wasi_shim](https://github.com/bjorn3/browser_wasi_shim) 0.4.2 (MIT/Apache-2.0) |
 | `samples/` | the hand-written samples and the manifest; benchmark entries point into the spinel checkout |
 | `tools/` | `spinel_query.rb` (the query core), `spinel-mcp.rb`, `spinel-lsp.rb` — subset Ruby, run by CRuby or compiled by spinel |
+| `editors/vscode/` | a thin VS Code client for `spinel-lsp` |
 | `scripts/` | the build and the three gates (`smoke.mjs`, `verify-ide.mjs`, `tools-smoke.mjs`) |
 
 Built, not committed: `lib/spinel.wasm`, `lib/clang/` (the toolchain, from
@@ -122,9 +209,8 @@ open http://localhost:8099/ide/
 
 ## What it does not do yet
 
-- Completion, go-to-definition, rename, `why` a slot widened: the compiler
-  does not answer those yet (`why` is matz's to design, per #4509; the
-  others need node kinds, spans and resolved callees in `--emit-types`).
+- Completion, go-to-definition, rename, `why` a slot widened: see "What
+  the compiler doesn't say yet" above.
 - Programs larger than a benchmark: a whole-app compile belongs in the
   native compiler, not a tab.
 - `Fiber`, `Thread`, sockets, processes: what the wasm32-wasi target does
