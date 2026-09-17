@@ -23,7 +23,8 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [siteDir, spinelDir] = process.argv.slice(2);
+// Absolute, because the native compiler is run from the samples directory.
+const [siteDir, spinelDir] = process.argv.slice(2).map((p) => p && path.resolve(p));
 if (!siteDir || !spinelDir) { console.error("usage: smoke.mjs <site dir> <spinel checkout>"); process.exit(2); }
 const lib = (f) => pathToFileURL(path.join(siteDir, "lib", f)).href;
 const { runWasi, analyze, text } = await import(lib("spinel-runner.mjs"));
@@ -51,7 +52,7 @@ for (const s of manifest) {
   try {
     // Same bare filename from the samples dir, so the #line paths agree.
     nativeC = execFileSync(nativeSpinel, [s.file, "--target=wasm32-wasi", "-S"], { cwd: path.join(siteDir, "samples"), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 });
-  } catch (e) { nativeRc = e.status; nativeC = e.stdout || ""; }
+  } catch (e) { nativeRc = e.status ?? -1; nativeC = e.stdout || ""; if (e.status == null) fail(`${s.name}: native spinel did not run: ${e.message}`); }
   if (nativeRc !== 0 || wasmC.rc !== 0) {
     check(nativeRc !== 0 && wasmC.rc !== 0, `${s.name}: -S refused on both (native rc=${nativeRc}, wasm rc=${wasmC.rc})`);
   } else {
