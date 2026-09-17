@@ -1,0 +1,34 @@
+{
+  "name": "spinel-lsp-client",
+  "displayName": "Spinel LSP client",
+  "description": "Runs spinel-lsp for Ruby files: spinel's diagnostics, hover types, inlay hints and fast/slow lenses.",
+  "version": "0.1.0",
+  "publisher": "rubys",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/rubys/spinel-ide" },
+  "engines": { "vscode": "^1.85.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:ruby"],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Spinel",
+      "properties": {
+        "spinel.lsp.command": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "The command that runs spinel-lsp, e.g. [\"ruby\", \"/path/to/spinel-ide/tools/spinel-lsp.rb\"] or [\"/path/to/spinel-lsp\"]. Empty runs this extension's own copy under ruby."
+        },
+        "spinel.compiler": {
+          "type": "string",
+          "default": "",
+          "description": "The spinel binary the server runs ($SPINEL). Empty means `spinel` on PATH."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  }
+}
