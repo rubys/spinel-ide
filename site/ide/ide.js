@@ -1,8 +1,10 @@
 // The /ide/ page: Monaco over spinel.wasm in a worker. Every edit re-runs
 // the whole-program analysis (debounced) and refreshes the hover types, the
-// markers, the RBS and the emitted C. The Run button runs the sample's
-// precompiled wasm32-wasi build; an edited program cannot run here yet
-// (that needs a C compiler in the tab), and the button says so.
+// markers, the RBS and the emitted C. Run executes the sample's precompiled
+// wasm32-wasi build when the text is the sample's; an edited program is
+// compiled in the tab by a second worker holding the clang toolchain
+// (fetched on the first such Run, ~105 MB, then cached) from the C the
+// analysis just emitted, and run the same way.
 import { createEditor, createOutputView } from "../lib/editor.js";
 import { createClient } from "../lib/wasm-client.mjs";
 
@@ -15,10 +17,37 @@ const els = {
 
 const client = createClient({
   workerUrl: new URL("../lib/worker.mjs", import.meta.url),
-  wasmUrl: new URL("../lib/spinel.wasm", import.meta.url).href,
+  initArgs: {
+    wasmUrl: new URL("../lib/spinel.wasm", import.meta.url).href,
+    pkgTarUrl: new URL("../lib/pkg.tar", import.meta.url).href,
+  },
   timeoutMs: 60000,
   onRestart: (reason) => status(`compiler restarted — ${reason}`),
 });
+
+// The toolchain worker is spawned on the first Run of an edited program.
+let clang = null;
+let toolchainStatus = "";
+function clangClient() {
+  if (clang) return clang;
+  clang = createClient({
+    workerUrl: new URL("../lib/clang-worker.mjs", import.meta.url),
+    initArgs: {
+      toolchainUrl: new URL("../lib/clang/", import.meta.url).href,
+      rtTarUrl: new URL("../lib/rt.tar", import.meta.url).href,
+    },
+    timeoutMs: 180000,
+    initTimeoutMs: 600000,
+    onRestart: (reason) => status(`toolchain restarted — ${reason}`),
+    onProgress: (p) => {
+      const mb = (n) => (n / 1048576).toFixed(0);
+      toolchainStatus = p.total ? `fetching toolchain ${mb(p.done)} / ${mb(p.total)} MB` : "fetching toolchain…";
+      status(toolchainStatus);
+      els.output.textContent = toolchainStatus + " (once; the browser caches it)";
+    },
+  });
+  return clang;
+}
 
 let samples = [];          // manifest entries {name, label, file, wasm}
 let current = null;        // the loaded sample
@@ -41,7 +70,7 @@ function selectTab(name) {
 // ── analysis ─────────────────────────────────────────────────────────
 function scheduleAnalyze() {
   clearTimeout(debounce);
-  debounce = setTimeout(runAnalyze, 300);
+  debounce = setTimeout(() => { debounce = null; runAnalyze(); }, 300);
 }
 
 async function runAnalyze() {
@@ -52,6 +81,7 @@ async function runAnalyze() {
   try {
     const r = await client.analyze(source, current ? current.file : "main.rb");
     r.sample = current?.name ?? null;
+    r.source = source;
     analysis = r;
     render(r);
     const errs = r.diagnostics.filter((d) => d.severity === "error").length;
@@ -89,26 +119,71 @@ function render(r) {
 const escapeHtml = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 
 // ── Run ──────────────────────────────────────────────────────────────
+const isPristine = () => Boolean(current) && editor.getValue() === currentSource;
+
 function updateRunButton() {
-  const pristine = current && editor.getValue() === currentSource;
-  els.run.disabled = !pristine || !current?.wasm;
-  els.run.title = !current?.wasm
-    ? "this sample has no precompiled build"
-    : pristine
-      ? "run the sample's precompiled wasm32-wasi build"
-      : "Run is for the unedited sample: an edited program needs a C compiler in the tab, which is not here yet";
+  els.run.disabled = false;
+  els.run.textContent = isPristine() && current?.wasm ? "Run" : "Build & run";
+  els.run.title = isPristine() && current?.wasm
+    ? "run the sample's precompiled wasm32-wasi build"
+    : "compile the emitted C to wasm32-wasi in this tab (the toolchain is fetched once, ~105 MB) and run it";
 }
 
+const formatRun = (r) => (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "") + `\n[exit ${r.rc} · ${r.elapsed_ms} ms]`;
+
 async function runProgram() {
-  if (!current?.wasm) return;
   selectTab("output");
-  els.output.textContent = "running…";
-  try {
-    const r = await client.run(new URL(`../samples/${current.wasm}`, import.meta.url).href, current.name, current.argv || []);
-    els.output.textContent = (r.stdout || "") + (r.stderr ? "\n[stderr]\n" + r.stderr : "") + `\n[exit ${r.rc} · ${r.elapsed_ms} ms]`;
-  } catch (e) {
-    els.output.textContent = `run failed — ${e.message}`;
+  if (isPristine() && current?.wasm) {
+    els.output.textContent = "running…";
+    try {
+      const r = await client.run(new URL(`../samples/${current.wasm}`, import.meta.url).href, current.name, current.argv || []);
+      els.output.textContent = formatRun(r);
+    } catch (e) {
+      els.output.textContent = `run failed — ${e.message}`;
+    }
+    return;
   }
+  // An edited program: the C from a current analysis, compiled here.
+  els.output.textContent = "analyzing…";
+  await settledAnalysis();
+  if (!analysis?.c) {
+    els.output.textContent = analysis?.rc
+      ? "nothing to build: the compile was refused — see Diagnostics"
+      : "nothing to build: no C was emitted";
+    return;
+  }
+  const c = analysis.c;
+  const tc = clangClient();
+  els.output.textContent = toolchainStatus || "loading toolchain…";
+  try {
+    await tc.ready();
+    els.output.textContent = "compiling…";
+    status("compiling…");
+    const r = await tc.buildAndRun(c, current?.name || "program", current?.argv || [], "raise");
+    if (!r.run) {
+      els.output.textContent = `C compile failed (rc ${r.built.rc}):\n${r.built.stderr}`;
+      status("compile failed");
+      return;
+    }
+    els.output.textContent = formatRun(r.run) + `\n[built ${(r.built.bytes / 1024).toFixed(0)} KB in ${r.built.elapsed_ms} ms]`;
+    status(`built in ${r.built.elapsed_ms} ms, ran in ${r.run.elapsed_ms} ms`);
+  } catch (e) {
+    els.output.textContent = `build failed — ${e.message}`;
+    status("build failed");
+  }
+}
+
+// Resolve once the analysis reflects the editor's current text: a pending
+// debounce or an in-flight pass is awaited rather than raced.
+function settledAnalysis() {
+  return new Promise((resolve) => {
+    const tick = () => {
+      if (!debounce && !inflight && !queued && analysis && analysis.source === editor.getValue()) return resolve();
+      if (debounce) { clearTimeout(debounce); debounce = null; runAnalyze(); }
+      setTimeout(tick, 50);
+    };
+    tick();
+  });
 }
 
 // ── samples ──────────────────────────────────────────────────────────
@@ -169,5 +244,6 @@ async function openSample(name) {
     run: runProgram,
     ready: () => Boolean(analysis),
     editorKind: () => editor.kind,
+    setSource: (text) => { editor.setValue(text); updateRunButton(); scheduleAnalyze(); },
   };
 })();

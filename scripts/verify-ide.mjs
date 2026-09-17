@@ -89,15 +89,18 @@ const out = await page.locator("#outputText").innerText();
 const expected = await (await fetch(`${base}/samples/binary_trees.out`)).text();
 check(out.startsWith(expected) && /\[exit 0/.test(out), `Run binary_trees: ${out.replace(/\s+/g, " ").trim().slice(0, 80)}`);
 
-// An edit disables Run (nothing to compile it with here) and re-analyzes.
-await page.evaluate(() => {
-  const ed = window.monaco?.editor.getEditors()[0];
-  if (ed) ed.executeEdits("test", [{ range: new window.monaco.Range(1, 1, 1, 1), text: "# edited\n" }]);
-});
-if (editorKind === "monaco") {
-  await page.waitForFunction(() => document.getElementById("btnRun").disabled, null, { timeout: 5000 });
-  ok("Run disabled after an edit");
-}
+// An edited program: Build & run compiles the emitted C in the tab with the
+// toolchain (fetched from the site under test) and runs it.
+await page.evaluate(() => window.__ide.open("hello"));
+await waitAnalyzed("hello");
+const helloSrc = await (await fetch(`${base}/samples/hello.rb`)).text();
+await page.evaluate((src) => window.__ide.setSource(src.replace('"hello"', '"edited in the tab"')), helloSrc);
+await page.waitForFunction(() => document.getElementById("btnRun").textContent.trim() === "Build & run", null, { timeout: 5000 });
+ok("an edit turns Run into Build & run");
+await page.click("#btnRun");
+await page.waitForFunction(() => /\[exit \d+|failed|refused/.test(document.getElementById("outputText").textContent), null, { timeout: 600000 });
+const built = await page.locator("#outputText").innerText();
+check(/^edited in the tab 12\n/.test(built) && /\[exit 0/.test(built), `Build & run of an edited program: ${built.replace(/\s+/g, " ").trim().slice(0, 120)}`);
 
 check(consoleErrors.length === 0, `no page errors${consoleErrors.length ? ": " + consoleErrors.slice(0, 3).join(" | ") : ""}`);
 await page.screenshot({ path: process.env.SCREENSHOT || "ide.png" });

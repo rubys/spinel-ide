@@ -10,7 +10,15 @@
 #   smoke gate and the Run button are checked against), and its
 #   --target=wasm32-wasi build as <name>.wasm unless the entry is `norun`
 #   (a sample that is refused on purpose has nothing to run)
-# - version.json: the spinel commit and build time the page shows
+# - lib/clang/: the @yowasp/clang toolchain (clang + wasm-ld + wasi sysroot
+#   as wasm, ~105 MB) that Build & run uses for an edited program, from the
+#   npm tarball at the version pinned below (YOWASP_CLANG_VERSION overrides)
+# - lib/rt.tar: what that toolchain needs from the checkout: the runtime
+#   headers, lib/wasi/, lib/wasm32-wasi/libspinel_rt.a and the bundled
+#   packages' sp_*_wasi.o
+# - lib/pkg.tar: the bundled packages' Ruby sources, for the analyzer's
+#   `require`
+# - version.json: the spinel commit, toolchain and build time the page shows
 #
 # Needs: the checkout built (`make deps && make && make wasm-rt`) and the
 # wasi-sdk. Native compiles here are what `spinel -E` does; on the CI runner
@@ -21,6 +29,7 @@ SPINEL=$(cd "${1:?spinel checkout}" && pwd)
 OUT=${2:?out dir}
 case "$OUT" in /*) ;; *) OUT="$PWD/$OUT";; esac
 HERE=$(cd "$(dirname "$0")/.." && pwd)
+YOWASP_CLANG_VERSION=${YOWASP_CLANG_VERSION:-22.0.0-git20542-10}
 
 rm -rf "$OUT"
 mkdir -p "$OUT/samples" "$OUT/lib"
@@ -64,8 +73,30 @@ fs.writeFileSync(path.join(out, "manifest.json"), JSON.stringify(published, null
 fs.rmSync(tmp, { recursive: true, force: true });
 EOF
 
+# The in-tab toolchain. YOWASP_CLANG_TGZ names a local tarball (a cache);
+# otherwise it is fetched from the npm registry.
+mkdir -p "$OUT/lib/clang"
+tgz=${YOWASP_CLANG_TGZ:-}
+if [ -z "$tgz" ]; then
+  tgz=$(mktemp -t yowasp-clang.XXXXXX)
+  curl -sSL -o "$tgz" "https://registry.npmjs.org/@yowasp/clang/-/clang-$YOWASP_CLANG_VERSION.tgz"
+fi
+tar xzf "$tgz" -C "$OUT/lib/clang" --strip-components=2 package/gen
+[ -f "$OUT/lib/clang/bundle.js" ] || { echo "toolchain tarball had no gen/bundle.js" >&2; exit 1; }
+echo "toolchain @yowasp/clang $YOWASP_CLANG_VERSION ($(du -sh "$OUT/lib/clang" | cut -f1))"
+
+# What the toolchain needs from the checkout, as one ustar archive.
+(cd "$SPINEL" && find lib -name '*.h' -not -path 'lib/wasm32-wasi/*' ; find lib/wasi -type f; echo lib/wasm32-wasi/libspinel_rt.a; ls packages/*/sp_*_wasi.o) \
+  | sort -u | (cd "$SPINEL" && tar --format=ustar -cf "$OUT/lib/rt.tar" -T -)
+echo "rt.tar: $(tar tf "$OUT/lib/rt.tar" | wc -l | tr -d ' ') files ($(du -sh "$OUT/lib/rt.tar" | cut -f1))"
+# The bundled packages' Ruby sources, for the analyzer: `require "json"`
+# resolves to packages/json/json.rb beside the compiler's lib/.
+(cd "$SPINEL" && find packages -name '*.rb' -not -path '*/test/*'; ls packages/*/spin.toml) \
+  | sort -u | (cd "$SPINEL" && tar --format=ustar -cf "$OUT/lib/pkg.tar" -T -)
+echo "pkg.tar: $(tar tf "$OUT/lib/pkg.tar" | wc -l | tr -d ' ') files ($(du -sh "$OUT/lib/pkg.tar" | cut -f1))"
+
 SHA=$(git -C "$SPINEL" rev-parse HEAD)
 VERSION=$("$SP" --version)
-printf '{ "spinel_sha": "%s", "spinel_version": "%s", "built_at": "%s" }\n' \
-  "$SHA" "$VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/version.json"
+printf '{ "spinel_sha": "%s", "spinel_version": "%s", "toolchain": "@yowasp/clang %s", "built_at": "%s" }\n' \
+  "$SHA" "$VERSION" "$YOWASP_CLANG_VERSION" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$OUT/version.json"
 echo "site at $OUT: $VERSION ($SHA)"

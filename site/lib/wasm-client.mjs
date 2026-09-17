@@ -3,7 +3,10 @@
 // client terminates the worker, spawns a fresh one, and rejects the call in
 // flight, so the page shows a message instead of freezing the tab.
 // Adapted from roundhouse/wasm/lib/wasm-client.mjs (MIT).
-export function createClient({ workerUrl, wasmUrl, timeoutMs = 30000, initTimeoutMs = 120000, onRestart } = {}) {
+// `initArgs` is what the worker's init op receives; `onProgress` gets the
+// worker's unsolicited {progress} messages (the toolchain worker reports
+// its fetch that way).
+export function createClient({ workerUrl, wasmUrl, initArgs, timeoutMs = 30000, initTimeoutMs = 120000, onRestart, onProgress } = {}) {
   let worker, pending, nextId, ready;
 
   function spawn() {
@@ -11,7 +14,8 @@ export function createClient({ workerUrl, wasmUrl, timeoutMs = 30000, initTimeou
     pending = new Map();
     nextId = 1;
     worker.onmessage = (e) => {
-      const { id, result, error } = e.data;
+      const { id, result, error, progress } = e.data;
+      if (progress && onProgress) { try { onProgress(progress); } catch { /* ignore */ } return; }
       const p = pending.get(id);
       if (!p) return;
       pending.delete(id);
@@ -19,7 +23,7 @@ export function createClient({ workerUrl, wasmUrl, timeoutMs = 30000, initTimeou
       error ? p.reject(new Error(error)) : p.resolve(result);
     };
     worker.onerror = (ev) => restart(`worker crashed: ${ev?.message || "trap"}`);
-    ready = post("init", { wasmUrl }, initTimeoutMs);
+    ready = post("init", initArgs ?? { wasmUrl }, initTimeoutMs);
     ready.catch(() => {});
   }
 
@@ -61,6 +65,7 @@ export function createClient({ workerUrl, wasmUrl, timeoutMs = 30000, initTimeou
     version: () => call("version", {}),
     analyze: (source, name) => call("analyze", { source, name }),
     run: (wasmUrl, name, argv) => call("run", { wasmUrl, name, argv }),
+    buildAndRun: (c, name, argv, overflow) => call("buildAndRun", { c, name, argv, overflow }),
     dispose: () => { try { worker.terminate(); } catch { /* ignore */ } },
   };
 }

@@ -18,6 +18,9 @@
 // 3. Every precompiled sample .wasm runs under the shim with stdout equal to
 //    the native binary's (samples/<name>.out).
 // 4. The hover resolver picks the innermost type at a word.
+// 5. Build & run: the in-tab toolchain (lib/clang + lib/rt.tar) compiles the
+//    C the wasm compiler emits for an EDITED program and a program that
+//    requires a bundled package, and both run with the expected output.
 import { readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
@@ -29,6 +32,8 @@ if (!siteDir || !spinelDir) { console.error("usage: smoke.mjs <site dir> <spinel
 const lib = (f) => pathToFileURL(path.join(siteDir, "lib", f)).href;
 const { runWasi, analyze, text } = await import(lib("spinel-runner.mjs"));
 const { typesAtWord } = await import(lib("editor.js"));
+const { loadToolchain, untar } = await import(lib("clang-runner.mjs"));
+const packages = untar(await readFile(path.join(siteDir, "lib", "pkg.tar"))).packages ?? {};
 
 let failures = 0;
 const ok = (msg) => console.log(`  ok  ${msg}`);
@@ -62,7 +67,7 @@ for (const s of manifest) {
 
 // 2. --emit-types
 for (const s of manifest) {
-  const r = await analyze(compiler, sources[s.name], { name: s.file });
+  const r = await analyze(compiler, sources[s.name], { name: s.file, packages });
   const errs = r.diagnostics.filter((d) => d.severity === "error");
   const warns = r.diagnostics.filter((d) => d.severity === "warning");
   check(r.types.length > 0, `${s.name}: --emit-types typed ${r.types.length} nodes in ${r.elapsed_ms} ms`);
@@ -95,11 +100,45 @@ for (const s of manifest) {
 
 // 4. hover resolution over real output
 {
-  const r = await analyze(compiler, sources.point, { name: "point.rb" });
+  const r = await analyze(compiler, sources.point, { name: "point.rb", packages });
   const line = sources.point.split("\n").findIndex((l) => /def dist2/.test(l)) + 1;
   const col = sources.point.split("\n")[line - 1].indexOf("@x") + 1;
   const got = typesAtWord(r.types, line, { startColumn: col, endColumn: col + 2 });
   check(got.includes("Integer"), `hover on @x in dist2 -> ${JSON.stringify(got)}`);
+}
+
+// 5. the in-tab toolchain on an edited program
+{
+  const fileFetch = async (url) => {
+    const p = url instanceof URL ? url : new URL(url);
+    const data = await readFile(p);
+    return new Response(data, { status: 200 });
+  };
+  const t0 = performance.now();
+  let tc;
+  try {
+    tc = await loadToolchain(pathToFileURL(path.join(siteDir, "lib", "clang") + "/"), pathToFileURL(path.join(siteDir, "lib", "rt.tar")), { fetchImpl: fileFetch });
+    ok(`toolchain loaded in ${Math.round(performance.now() - t0)} ms (${tc.objects.length} package objects)`);
+  } catch (e) { fail(`toolchain failed to load: ${e.message}`); }
+  if (tc) {
+    const edited = sources.hello.replace('"hello"', '"edited"');
+    const a = await analyze(compiler, edited, { name: "hello.rb", packages });
+    check(a.c.length > 0, "edited hello: C emitted");
+    const b = await tc.compile(a.c, { name: "hello" });
+    check(b.wasm && b.rc === 0, `edited hello: compiled in ${b.elapsed_ms} ms${b.wasm ? ` (${b.wasm.length} bytes)` : `: ${b.stderr.slice(0, 300)}`}`);
+    if (b.wasm) {
+      const r = await runWasi(await WebAssembly.compile(b.wasm), "hello", [], {}, []);
+      check(r.rc === 0 && r.stdout === "edited 12\n", `edited hello runs: ${JSON.stringify(r.stdout)}${r.stderr ? " stderr: " + r.stderr.slice(0, 200) : ""}`);
+    }
+    const j = await analyze(compiler, 'require "json"\nputs JSON.generate({ "a" => [1, 2.5, nil] })\n', { name: "j.rb", packages });
+    check(j.c.length > 0 && !j.diagnostics.some((d) => d.severity === "error"), `require "json" resolves in the analyzer (${j.diagnostics.map((d) => d.message.slice(0, 60)).join("; ") || "no diagnostics"})`);
+    const jb = await tc.compile(j.c, { name: "j" });
+    check(jb.wasm && jb.rc === 0, `require "json" program: linked${jb.wasm ? "" : `: ${jb.stderr.slice(0, 300)}`}`);
+    if (jb.wasm) {
+      const r = await runWasi(await WebAssembly.compile(jb.wasm), "j", [], {}, []);
+      check(r.stdout === '{"a":[1,2.5,null]}\n', `require "json" program runs: ${JSON.stringify(r.stdout)}`);
+    }
+  }
 }
 
 console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
