@@ -13,10 +13,14 @@
 # (a minute); a background analysis with a last-good snapshot is the next
 # step, and this MVP says so rather than pretend.
 #
-# What the server can say is bounded by `--emit-types`: a start position
-# per node, no end, no node kind; hover resolves to the word under the
-# cursor, and a widening is reported at its `def`. Columns are treated as
-# characters (UTF-16 units and bytes agree for ASCII).
+# What the server can say is what `--emit-types` says. Since
+# matz/spinel#4522 that is a span, a kind and a name per node, the widened
+# slot per warning, and codegen's decision per call and block, so hover
+# shows the expression under the cursor and its dispatch, a widening marks
+# its parameter, and go-to-definition and references resolve through the
+# compiler's own tree; with an older spinel, hover falls back to the word
+# under the cursor. Columns are treated as characters (UTF-16 units and
+# bytes agree for ASCII).
 #
 # SPINEL_LSP_LOG=<path> appends one line per message in and out (method,
 # id, and for an analysis its timing and counts): what to attach to a
@@ -103,6 +107,8 @@ module SpinelLSP
             "hoverProvider" => true,
             "inlayHintProvider" => true,
             "codeLensProvider" => { "resolveProvider" => false },
+            "definitionProvider" => true,
+            "referencesProvider" => true,
           },
           "serverInfo" => { "name" => "spinel-lsp", "version" => "0.1" },
         })
@@ -133,6 +139,10 @@ module SpinelLSP
         reply(id, inlay_hints(params))
       when "textDocument/codeLens"
         reply(id, code_lenses(params))
+      when "textDocument/definition"
+        reply(id, definition(params))
+      when "textDocument/references"
+        reply(id, references(params))
       else
         error(id, -32601, "method not found: #{method}") unless id.nil?
       end
@@ -155,19 +165,38 @@ module SpinelLSP
       diags = snap.diagnostics.map do |d|
         line = [d["line"].to_i - 1, 0].max
         col = d["col"].to_i
-        len = if d["severity"] == "error"
-                line_length(text, line) - col
-              else
-                r = snap.word_range(path_of(uri), line + 1, col)
-                r ? r[1] - r[0] : 3
-              end
-        len = 1 if len < 1
+        if d["end_line"]
+          rng = range(line, col, d["end_line"].to_i - 1, d["end_col"].to_i)
+        else
+          len = if d["severity"] == "error"
+                  line_length(text, line) - col
+                else
+                  r = snap.word_range(path_of(uri), line + 1, col)
+                  r ? r[1] - r[0] : 3
+                end
+          len = 1 if len < 1
+          rng = range(line, col, line, col + len)
+        end
         {
-          "range" => range(line, col, line, col + len),
+          "range" => rng,
           "severity" => d["severity"] == "error" ? 1 : 2,
           "source" => "spinel",
           "message" => d["message"],
         }
+      end
+      # The codegen lens as diagnostics an editor renders quietly: a boxed
+      # send is Information, a class switch a Hint, a block that became a
+      # function a Hint.
+      snap.slow_sites.each do |d|
+        next unless d["end_line"]
+        msg, sev = if d["kind"] == "BlockNode"
+                     ["block compiled as a function of its own (a proc, lambda, Fiber or Thread body)", 4]
+                   elsif d["dispatch"] == "boxed"
+                     ["`#{d['name']}`: boxed send — the receiver is a boxed value, dispatched over its tag at run time", 3]
+                   else
+                     ["`#{d['name']}`: dispatched through a switch over the receiver's classes", 4]
+                   end
+        diags << { "range" => range(d["line"] - 1, d["col"], d["end_line"] - 1, d["end_col"]), "severity" => sev, "source" => "spinel codegen", "message" => msg }
       end
       notify("textDocument/publishDiagnostics", { "uri" => uri, "diagnostics" => diags })
     end
@@ -181,16 +210,60 @@ module SpinelLSP
       pos = params["position"] || {}
       line = pos["line"].to_i + 1
       col = pos["character"].to_i
-      types = snap.type_at(path_of(uri), line, col)
-      return nil if types.empty?
-      r = snap.word_range(path_of(uri), line, col)
-      word = snap.line_text(path_of(uri), line)[r[0]...r[1]]
-      value = "**#{word}** — inferred type\n\n" + types.map { |t| "`#{t}`" }.join(" · ")
-      value += "\n\n_untyped: the boxed slow path_" if types.include?("untyped")
+      h = snap.hover_at(path_of(uri), line, col)
+      return nil if h.nil?
+      label = h["name"] ? "**#{h['name']}**" : "*#{h['kind'].to_s.sub(/Node\z/, '')}*"
+      lines = ["#{label} — `#{h['rbs']}`"]
+      lines << "in " + h["chain"].map { |c| "`#{c['name']}` → `#{c['rbs']}`" }.join(", ") unless h["chain"].empty?
+      if h["call"]
+        lines << "dispatch of `#{h['call']['name']}`: " + dispatch_text(h["call"]["dispatch"])
+      end
+      if h["block"]
+        lines << (h["block"]["inlined"] ? "block: inlined into its caller" : "block: a function of its own (a proc, lambda, Fiber or Thread body)")
+      end
+      lines << "_untyped: the boxed slow path_" if h["rbs"].to_s.include?("untyped")
+      r = h["range"]
       {
-        "contents" => { "kind" => "markdown", "value" => value },
-        "range" => range(line - 1, r[0], line - 1, r[1]),
+        "contents" => { "kind" => "markdown", "value" => lines.join("\n\n") },
+        "range" => range(r[0] - 1, r[1], r[2] - 1, r[3]),
       }
+    end
+
+    def dispatch_text(d)
+      case d
+      when "direct" then "direct — one statically bound C call, or a builtin emitted in place (the fast path)"
+      when "switch" then "switch — a switch over the classes the receiver can hold, each arm a direct call"
+      when "boxed" then "boxed — the receiver is a boxed value; a runtime helper dispatches over its tag at run time"
+      else d.to_s
+      end
+    end
+
+    def definition(params)
+      uri = (params["textDocument"] || {})["uri"]
+      snap = @snaps[uri]
+      return nil if snap.nil?
+      pos = params["position"] || {}
+      d = snap.definition_at(path_of(uri), pos["line"].to_i + 1, pos["character"].to_i)
+      return nil if d.nil?
+      location(uri, d)
+    end
+
+    def references(params)
+      uri = (params["textDocument"] || {})["uri"]
+      snap = @snaps[uri]
+      return [] if snap.nil?
+      pos = params["position"] || {}
+      snap.references_at(path_of(uri), pos["line"].to_i + 1, pos["character"].to_i).map { |r| location(uri, r) }
+    end
+
+    # A record's location: its own file when it names one that differs from
+    # the document's (a require_relative), else the document.
+    def location(uri, r)
+      target = uri
+      if r["file"] && File.basename(r["file"]) != File.basename(path_of(uri)) && File.exist?(r["file"])
+        target = "file://" + File.expand_path(r["file"])
+      end
+      { "uri" => target, "range" => range(r["line"] - 1, r["col"], (r["end_line"] || r["line"]) - 1, r["end_col"] || (r["col"] + (r["name"] || "").length)) }
     end
 
     # The inferred signature after each `def`'s parameter list: the

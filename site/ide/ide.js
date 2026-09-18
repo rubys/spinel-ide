@@ -12,6 +12,7 @@ const $ = (id) => document.getElementById(id);
 const els = {
   sample: $("sample"), analyze: $("btnAnalyze"), run: $("btnRun"), status: $("status"),
   counts: $("counts"), editor: $("editor"), diagList: document.querySelector("#diagnostics ul"),
+  cgList: document.querySelector("#codegen ul"), cgCounts: $("cgcounts"),
   output: $("outputText"), version: $("version"),
 };
 
@@ -100,7 +101,9 @@ async function runAnalyze() {
 
 function render(r) {
   editor.setTypes(r.types);
+  editor.setCodegen(r.codegen);
   editor.setMarkers(r.diagnostics);
+  renderCodegen(r.codegen || []);
   rbsView.setValue(r.rbs || "(no signatures: the program defines no methods or classes)", "ruby");
   cView.setValue(r.c || (r.rc ? "(nothing emitted: the compile was refused — see Diagnostics)" : ""), "c");
   els.diagList.innerHTML = "";
@@ -117,6 +120,36 @@ function render(r) {
 }
 
 const escapeHtml = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// The codegen lens as a list: every call that did not take the direct
+// path, and every block that became a function of its own.
+function renderCodegen(codegen) {
+  const calls = codegen.filter((d) => d.kind === "CallNode");
+  const slow = calls.filter((d) => d.dispatch !== "direct");
+  const fns = codegen.filter((d) => d.kind === "BlockNode" && d.inlined === false);
+  const boxed = slow.filter((d) => d.dispatch === "boxed").length;
+  els.cgCounts.innerHTML = calls.length
+    ? (slow.length ? `<b class="${boxed ? "err" : "warn"}">${slow.length}</b>/${calls.length}` : `<b class="ok">${calls.length}</b>`)
+    : "";
+  els.cgList.innerHTML = "";
+  if (!codegen.length) {
+    els.cgList.innerHTML = `<li class="empty">No codegen records: this spinel does not report them, or nothing was compiled.</li>`;
+    return;
+  }
+  const legend = document.createElement("li");
+  legend.className = "legend";
+  legend.textContent = `${calls.length} calls placed: ${calls.length - slow.length} direct, ${slow.length - boxed} through a class switch, ${boxed} boxed. ${codegen.filter((d) => d.kind === "BlockNode").length} blocks, ${fns.length} compiled as functions of their own. Direct calls and inlined blocks are the fast path and are not listed.`;
+  els.cgList.appendChild(legend);
+  for (const d of [...slow, ...fns].sort((a, b) => a.line - b.line || a.col - b.col)) {
+    const li = document.createElement("li");
+    const what = d.kind === "CallNode"
+      ? `<b>${escapeHtml(d.name)}</b> → ${d.dispatch}${d.dispatch === "boxed" ? " (a runtime helper dispatches over the receiver's tag)" : " (a switch over the receiver's classes)"}`
+      : "block → a function of its own (a proc, lambda, Fiber or Thread body)";
+    li.className = d.kind === "CallNode" ? d.dispatch : "fn";
+    li.innerHTML = `<span class="where">${d.line}:${d.col}</span> ${what}`;
+    els.cgList.appendChild(li);
+  }
+}
 
 // ── Run ──────────────────────────────────────────────────────────────
 const isPristine = () => Boolean(current) && editor.getValue() === currentSource;

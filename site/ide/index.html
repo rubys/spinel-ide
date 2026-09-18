@@ -51,6 +51,13 @@
   #diagnostics .where { color: var(--muted); }
   #diagnostics .empty { color: var(--muted); padding: 14px; font-family: var(--font); }
   #output pre { color: var(--fg); }
+  .sp-boxed { text-decoration: underline wavy var(--err); text-underline-offset: 3px; }
+  .sp-switch { text-decoration: underline dotted var(--warn); text-underline-offset: 3px; }
+  #codegen ul { list-style: none; margin: 0; padding: 8px 0; overflow: auto; height: 100%; }
+  #codegen li { padding: 5px 14px; border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px; }
+  #codegen li.boxed { border-left: 3px solid var(--err); } #codegen li.switch { border-left: 3px solid var(--warn); } #codegen li.fn { border-left: 3px solid var(--muted); }
+  #codegen .where { color: var(--muted); }
+  #codegen .legend, #codegen .empty { color: var(--muted); padding: 10px 14px; font-family: var(--font); border-bottom: 1px solid var(--line); }
   #output .rc { color: var(--muted); }
   footer { padding: 6px 16px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px; display: flex; gap: 16px; flex-wrap: wrap; }
   footer a { color: var(--accent); }
@@ -75,11 +82,13 @@
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="rbs" aria-selected="true">Signatures</button>
       <button role="tab" data-tab="diagnostics">Diagnostics <span id="counts"></span></button>
+      <button role="tab" data-tab="codegen">Codegen <span id="cgcounts"></span></button>
       <button role="tab" data-tab="c">Emitted C</button>
       <button role="tab" data-tab="output">Output</button>
     </nav>
     <section class="pane" id="rbs" data-active></section>
     <section class="pane" id="diagnostics"><ul></ul></section>
+    <section class="pane" id="codegen"><ul></ul></section>
     <section class="pane" id="c"></section>
     <section class="pane" id="output"><pre id="outputText"></pre></section>
   </aside>

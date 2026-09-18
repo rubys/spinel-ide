@@ -62,10 +62,31 @@ if (editorKind === "monaco") {
   try {
     await page.waitForSelector(".monaco-hover:not(.hidden)", { state: "visible", timeout: 10000 });
     const text = await page.locator(".monaco-hover:not(.hidden)").first().innerText();
-    check(/Integer/.test(text), `hover on @x shows: ${text.replace(/\s+/g, " ").trim().slice(0, 80)}`);
+    check(/@x/.test(text) && /Integer/.test(text), `hover on @x shows: ${text.replace(/\s+/g, " ").trim().slice(0, 80)}`);
   } catch (e) {
     fail(`hover widget did not appear: ${e.message}`);
   }
+  // The call chain: the tightest span wins and its dispatch is shown.
+  await page.mouse.move(5, 5);
+  const pl = src.split("\n").findIndex((l) => /^puts pts.map/.test(l)) + 1;
+  const dcol = src.split("\n")[pl - 1].indexOf("dist2") + 2;
+  const pt2 = await page.evaluate(([l, c]) => {
+    const ed = window.monaco.editor.getEditors()[0];
+    ed.revealLineInCenter(l);
+    const p = ed.getScrolledVisiblePosition({ lineNumber: l, column: c });
+    const r = ed.getDomNode().getBoundingClientRect();
+    return { x: r.left + p.left + 3, y: r.top + p.top + p.height / 2 };
+  }, [pl, dcol]);
+  await page.mouse.move(pt2.x, pt2.y); await page.mouse.move(pt2.x + 1, pt2.y);
+  try {
+    await page.waitForFunction(() => { const h = document.querySelector(".monaco-hover:not(.hidden)"); return h && /dist2/.test(h.innerText); }, null, { timeout: 10000 });
+    const text = await page.locator(".monaco-hover:not(.hidden)").first().innerText();
+    check(/dist2/.test(text) && /switch/.test(text), `hover on the dist2 call shows its dispatch: ${text.replace(/\s+/g, " ").trim().slice(0, 100)}`);
+  } catch (e) {
+    fail(`hover on the call did not appear: ${e.message}`);
+  }
+  const cg = await page.evaluate(() => document.querySelectorAll("#codegen li.switch, #codegen li.boxed").length);
+  check(cg === 3, `Codegen tab lists ${cg} calls off the direct path`);
 }
 
 // Refusal -> error marker; widening -> warning marker.

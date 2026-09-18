@@ -80,6 +80,7 @@ export async function analyze(module, source, opts = {}) {
   if (json) { try { parsed = JSON.parse(json); } catch { parsed = null; } }
   return {
     types: parsed?.types ?? [],
+    codegen: parsed?.codegen ?? [],   // per-call dispatch and per-block inlining, since matz/spinel#4522
     diagnostics: parsed?.diagnostics ?? parseStderr(types.stderr, name),
     rbs: text(rbs.files["main.rbs"]) ?? "",
     c: c.rc === 0 ? c.stdout : "",

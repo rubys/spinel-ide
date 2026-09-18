@@ -26,7 +26,7 @@ module SpinelMCP
       "description" => "Only the refusals: what in this program spinel will not compile, with the message naming the construct. Empty means the program compiles.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" } }, "required" => ["file"] } },
     { "name" => "type_at",
-      "description" => "The type spinel inferred for the name at a position (1-based line, 0-based column), as RBS. Several types mean nested expressions start at that word; the innermost is first. `untyped` is the boxed slow path.",
+      "description" => "The type spinel inferred for the expression at a position (1-based line, 0-based column), as RBS: the tightest node containing the position, the calls enclosing it, and what codegen decided for the call there (direct / switch / boxed). `untyped` is the boxed slow path.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "line" => { "type" => "integer" }, "column" => { "type" => "integer" } }, "required" => ["file", "line", "column"] } },
     { "name" => "signatures",
       "description" => "The inferred signatures of every method and instance variable, as RBS, with each method marked fast (typed C) or slow (a slot widened to untyped). Optionally only one class.",
@@ -34,6 +34,15 @@ module SpinelMCP
     { "name" => "c_for",
       "description" => "The C spinel emitted for one method: `Class#method`, `Class.method` or a bare top-level `method`. For reading what a slot's type made the compiler do (a boxed sp_RbVal parameter, a dispatch switch); not human-friendly.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "method" => { "type" => "string" } }, "required" => ["file", "method"] } },
+    { "name" => "slow_sites",
+      "description" => "The codegen lens: every call in the program that did not take the direct path (dispatched through a switch over the receiver's classes, or boxed and dispatched at run time) and every block compiled as a function of its own, with positions. The one call in a method that took the slow path is the one to look at.",
+      "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" } }, "required" => ["file"] } },
+    { "name" => "definition",
+      "description" => "Where the name at a position is defined: the def a call resolves to, or the first write of a local or instance variable.",
+      "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "line" => { "type" => "integer" }, "column" => { "type" => "integer" } }, "required" => ["file", "line", "column"] } },
+    { "name" => "references",
+      "description" => "Every read, write, call and def of the name at a position, in source order.",
+      "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "line" => { "type" => "integer" }, "column" => { "type" => "integer" } }, "required" => ["file", "line", "column"] } },
     { "name" => "version",
       "description" => "The spinel compiler this server runs, and the root it resolves files against.",
       "inputSchema" => { "type" => "object", "properties" => {} } },
@@ -114,14 +123,30 @@ module SpinelMCP
       when "type_at"
         line = args["line"].to_i
         col = args["column"].to_i
-        types = snap.type_at(file, line, col)
-        range = snap.word_range(file, line, col)
-        if types.empty?
-          "no typed node starts at #{rel(file)}:#{line}:#{col}" + (range ? " (word #{snap.line_text(file, line)[range[0]...range[1]]})" : "")
-        else
-          word = snap.line_text(file, line)[range[0]...range[1]]
-          "#{rel(file)}:#{line}:#{range[0]} `#{word}`: " + types.join(" | ")
-        end
+        h = snap.hover_at(file, line, col)
+        raise ToolError, "nothing typed at #{rel(file)}:#{line}:#{col}" if h.nil?
+        r = h["range"]
+        out = ["#{rel(file)}:#{r[0]}:#{r[1]}..#{r[2]}:#{r[3]} #{h['name'] ? '`' + h['name'] + '`' : h['kind']}: #{h['rbs']}"]
+        out << "enclosing: " + h["chain"].map { |c| "#{c['name']} -> #{c['rbs']}" }.join(", ") unless h["chain"].empty?
+        out << "dispatch of #{h['call']['name']}: #{h['call']['dispatch']}" if h["call"]
+        out << "block: #{h['block']['inlined'] ? 'inlined' : 'a function of its own'}" if h["block"]
+        out << "(an older spinel: positions resolved by word, no spans)" if h["fallback"]
+        out.join("\n")
+      when "slow_sites"
+        sites = snap.slow_sites
+        calls = snap.codegen.count { |d| d["kind"] == "CallNode" }
+        return "no codegen records (this spinel does not report them, or the compile was refused)" if snap.codegen.empty?
+        head = "#{rel(file)}: #{calls} calls placed, #{sites.count { |d| d['kind'] == 'CallNode' }} off the direct path, #{sites.count { |d| d['kind'] == 'BlockNode' }} blocks compiled as functions"
+        return head + "\n(every call is direct and every block inlined)" if sites.empty?
+        head + "\n" + sites.map { |d| d["kind"] == "CallNode" ? "#{rel(d['file'])}:#{d['line']}:#{d['col']} `#{d['name']}` -> #{d['dispatch']}" : "#{rel(d['file'])}:#{d['line']}:#{d['col']} block -> function" }.join("\n")
+      when "definition"
+        d = snap.definition_at(file, args["line"].to_i, args["column"].to_i)
+        raise ToolError, "no definition found for the name at #{rel(file)}:#{args['line']}:#{args['column']}" if d.nil?
+        "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']} `#{d['name']}`: #{d['rbs']}"
+      when "references"
+        refs = snap.references_at(file, args["line"].to_i, args["column"].to_i)
+        raise ToolError, "no name at #{rel(file)}:#{args['line']}:#{args['column']}" if refs.empty?
+        refs.map { |d| "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']}" }.join("\n")
       when "signatures"
         sigs = snap.signatures
         sigs = sigs.select { |s| s["class"] == args["class"] } if args["class"]

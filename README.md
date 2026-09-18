@@ -44,15 +44,19 @@ the answers to agree (`scripts/tools-smoke.mjs`); the binaries it built
 PATH.
 
 **spinel-mcp** — stdio, stateless; tools `diagnostics`, `wont_compile`,
-`type_at`, `signatures`, `c_for`, `version`. For Claude Code:
+`type_at` (the expression at a position, its enclosing calls and its
+dispatch), `signatures`, `c_for`, `slow_sites` (every call off the direct
+path), `definition`, `references`, `version`. For Claude Code:
 
 ```json
 { "mcpServers": { "spinel": { "command": "ruby", "args": ["/path/to/spinel-ide/tools/spinel-mcp.rb", "."] } } }
 ```
 
 **spinel-lsp** — read-only: diagnostics (refusals as errors, widenings as
-warnings), hover (the inferred type), inlay hints (the inferred signature
-after each `def`), code lenses (fast path / slow path per `def`). A buffer
+warnings on their slot, codegen's switch and boxed dispatches as hints),
+hover (the expression's type, its enclosing calls, its dispatch), inlay
+hints (the inferred signature after each `def`), code lenses (fast path /
+slow path per `def`), go-to-definition and references. A buffer
 is analyzed by writing it beside its file so `require_relative` resolves.
 Analysis is synchronous in this MVP, which is right for programs spinel
 compiles in tens of milliseconds and wrong for a whole application.
@@ -90,34 +94,35 @@ Editor setup:
 Both tools are bounded by what `--emit-types` says; the section below is
 the list.
 
-## What the compiler doesn't say yet
+## What the compiler says, and what it doesn't yet
 
 Every consumer here — the page, the LSP, the MCP — answers from the JSON
-`--emit-types` writes, and all of them hit the same four limits of it.
-This is the list [matz/spinel#4522](https://github.com/matz/spinel/issues/4522)
-asks about; it will shrink as fields land.
+`--emit-types` writes. Four limits of that JSON were the reason the tools
+were built; [matz/spinel#4522](https://github.com/matz/spinel/issues/4522)
+asked for them and all four landed the same day
+([docs/emit-types.md](https://github.com/matz/spinel/blob/master/docs/emit-types.md)),
+and the consumers use them:
 
-1. **No end position.** A node has a start line and column, no end. On
-   `puts pts.map { |p| p.dist2(pts[0]) }.inspect` three nodes start at
-   `pts` — the local read, the `map` call, the `inspect` call — so a hover
-   there shows `Array[untyped] · Array[Integer] · String` and cannot say
-   which is which. With spans, a hover shows the type of exactly the
-   expression under the cursor.
-2. **No node kind or name.** An entry is a position and a type, so nothing
-   here can tell an identifier from a literal or find the other uses of
-   `pts`. Go-to-definition, references and rename all wait on this.
-3. **A widening names the method, not the slot.** *"`dist2` has a
-   parameter or return widened to untyped"* is stamped at the `def`; the
-   marker sits there, and the user reads the RBS to work out that it was
-   `o`. With the slot and its position, the marker lands on `o`.
-4. **Codegen's decisions are invisible.** Whether a call became a direct C
-   call, a switch over the receiver's classes or a boxed send, and whether
-   a block was inlined, is knowable only from the emitted C, which nobody
-   reads. Per-node `dispatch`/`inlined` fields would give an editor the
-   performance lens no other Ruby tool can have.
+1. **Spans** (`end_line`/`end_col`): a hover shows the type of exactly the
+   expression under the cursor, and the calls enclosing it — on
+   `puts pts.map { |p| p.dist2(pts[0]) }.inspect`, hovering `pts` says
+   `pts — Array[untyped]`, in `map → Array[Integer]`, `inspect → String`.
+2. **Node kind and name**: go-to-definition (the def a call resolves to,
+   the first write of a variable) and references, in the LSP and the MCP.
+3. **The widened slot**: a widening marks its parameter (`o`), or the def
+   for a return, with a message that names it.
+4. **Codegen's decisions** (`dispatch` per call, `inlined` per block): the
+   page underlines every call that did not take the direct path and lists
+   them in a Codegen tab; the LSP publishes them as hint-severity
+   diagnostics; the MCP has `slow_sites`.
 
-Not on this list, because no dump can provide it until the analyzer
-records it: *why* a slot widened — matz's own design, per #4509.
+With an older spinel that lacks the fields, hover falls back to the word
+under the cursor and the rest is absent.
+
+Still not said, because no dump can provide it until the analyzer records
+it: *why* a slot widened — matz's own design, per #4509. And nothing here
+completes: member tables for completion would be the next ask, once
+someone wants it.
 
 ## Reporting what you see
 
@@ -147,7 +152,8 @@ exactly the kind of report that turns into a field in `--emit-types`.
 - [matz/spinel#4519](https://github.com/matz/spinel/issues/4519) — the
   wasm link on a macOS host; fixed.
 - [matz/spinel#4522](https://github.com/matz/spinel/issues/4522) — the
-  request for the four fields above.
+  four `--emit-types` fields above; landed in adc34fd2 and d5b10053,
+  documented in docs/emit-types.md, and consumed here.
 
 ## It tracks spinel master
 
@@ -210,8 +216,8 @@ open http://localhost:8099/ide/
 
 ## What it does not do yet
 
-- Completion, go-to-definition, rename, `why` a slot widened: see "What
-  the compiler doesn't say yet" above.
+- Completion, rename, `why` a slot widened: see "What the compiler says,
+  and what it doesn't yet" above.
 - Programs larger than a benchmark: a whole-app compile belongs in the
   native compiler, not a tab.
 - `Fiber`, `Thread`, sockets, processes: what the wasm32-wasi target does

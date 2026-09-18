@@ -31,7 +31,7 @@ const [siteDir, spinelDir] = process.argv.slice(2).map((p) => p && path.resolve(
 if (!siteDir || !spinelDir) { console.error("usage: smoke.mjs <site dir> <spinel checkout>"); process.exit(2); }
 const lib = (f) => pathToFileURL(path.join(siteDir, "lib", f)).href;
 const { runWasi, analyze, text } = await import(lib("spinel-runner.mjs"));
-const { typesAtWord } = await import(lib("editor.js"));
+const { typesAtWord, hoverAt, spansAt } = await import(lib("editor.js"));
 const { loadToolchain, untar } = await import(lib("clang-runner.mjs"));
 const packages = untar(await readFile(path.join(siteDir, "lib", "pkg.tar"))).packages ?? {};
 
@@ -81,8 +81,14 @@ for (const s of manifest) {
   if (s.name === "widening") {
     check(warns.some((d) => /widened to untyped/.test(d.message)), `widening: the slow-path warning is present (${warns.length} warnings)`);
     check(/untyped/.test(r.rbs), "widening: RBS shows untyped");
+    check(warns.some((d) => d.slot === "param" && d.param === "items"), `widening: the warning names its slot (${warns.map((d) => d.slot + (d.param ? ":" + d.param : "")).join(", ")})`);
   }
-  if (s.name === "point") check(/@x: Integer/.test(r.rbs), `point: RBS unboxed @x as Integer`);
+  if (s.name === "point") {
+    check(/@x: Integer/.test(r.rbs), `point: RBS unboxed @x as Integer`);
+    const sw = r.codegen.filter((d) => d.kind === "CallNode" && d.dispatch === "switch").map((d) => d.name);
+    check(sw.includes("dist2"), `point: codegen reports dist2 dispatched through a switch (${sw.join(", ")})`);
+    check(r.codegen.some((d) => d.kind === "BlockNode" && d.inlined === true), "point: codegen reports an inlined block");
+  }
 }
 
 // 3. run every precompiled sample against the native oracle
@@ -98,13 +104,24 @@ for (const s of manifest) {
   check(r.rc === 0 && r.stdout === expected, `${s.name}.wasm: rc=${r.rc}, stdout matches native (${expected.length} bytes, ${ms} ms)${r.stdout === expected ? "" : `\n      wasm: ${JSON.stringify(r.stdout.slice(0, 200))}\n    native: ${JSON.stringify(expected.slice(0, 200))}\n    stderr: ${r.stderr.slice(0, 200)}`}`);
 }
 
-// 4. hover resolution over real output
+// 4. hover resolution over real output: the tightest span, its chain, the dispatch
 {
   const r = await analyze(compiler, sources.point, { name: "point.rb", packages });
-  const line = sources.point.split("\n").findIndex((l) => /def dist2/.test(l)) + 1;
-  const col = sources.point.split("\n")[line - 1].indexOf("@x") + 1;
-  const got = typesAtWord(r.types, line, { startColumn: col, endColumn: col + 2 });
-  check(got.includes("Integer"), `hover on @x in dist2 -> ${JSON.stringify(got)}`);
+  const lines = sources.point.split("\n");
+  const dl = lines.findIndex((l) => /def dist2/.test(l)) + 1;
+  const xc = lines[dl - 1].indexOf("@x") + 1;
+  const h = hoverAt(r.types, r.codegen, dl, xc + 1);
+  check(h && h.tight.name === "@x" && h.tight.rbs === "Integer", `hover on @x in dist2 -> ${h ? h.tight.name + ": " + h.tight.rbs : "nothing"}`);
+  const pl = lines.findIndex((l) => /^puts pts.map/.test(l)) + 1;
+  const hp = hoverAt(r.types, r.codegen, pl, 6);
+  check(hp && hp.tight.name === "pts" && hp.tight.rbs === "Array[untyped]" && hp.chain.some((c) => c.name === "map" && c.rbs === "Array[Integer]"),
+    `hover on pts in the call chain -> ${hp ? hp.tight.name + ": " + hp.tight.rbs + " in " + hp.chain.map((c) => c.name + ":" + c.rbs).join(", ") : "nothing"}`);
+  const dc = lines[pl - 1].indexOf("dist2") + 1;
+  const hd = hoverAt(r.types, r.codegen, pl, dc + 1);
+  check(hd && hd.call && hd.call.name === "dist2" && hd.call.dispatch === "switch", `hover on the dist2 call -> dispatch ${hd?.call?.dispatch}`);
+  // The fallback still answers for a dump without spans.
+  const stripped = r.types.map(({ end_line, end_col, ...t }) => t);
+  check(typesAtWord(stripped, dl, { startColumn: xc, endColumn: xc + 2 }).includes("Integer"), "word fallback still resolves @x without spans");
 }
 
 // 5. the in-tab toolchain on an edited program

@@ -4,8 +4,11 @@
 # --emit-types JSON, --emit-rbs text and -S output into questions an editor
 # or an agent asks: the type at a position, the diagnostics, the inferred
 # signatures, the C a method compiled to. Nothing here reaches into the
-# compiler; the contract is what `spinel` prints, and every answer's
-# precision is that of `--emit-types` (a start position per node, no end).
+# compiler; the contract is what `spinel` prints. Since matz/spinel#4522
+# every record carries a span, a kind and a name, a widening names its
+# slot, and a `codegen` array says what codegen decided at each call and
+# block (docs/emit-types.md); an older spinel without those falls back to
+# a start position and the word under the cursor.
 #
 # Written in the spinel subset so the tracker can compile it with spinel
 # (`spinel tools/spinel-mcp.rb -o spinel-mcp`), and plain enough that
@@ -15,12 +18,13 @@ require "json"
 module SpinelQuery
   # A parsed analysis of one program.
   class Snapshot
-    attr_reader :entry, :types, :diagnostics, :rbs, :c, :stderr, :rc, :elapsed_ms
+    attr_reader :entry, :types, :diagnostics, :codegen, :rbs, :c, :stderr, :rc, :elapsed_ms
 
-    def initialize(entry, types, diagnostics, rbs, c, stderr, rc, elapsed_ms, sources)
+    def initialize(entry, types, diagnostics, rbs, c, stderr, rc, elapsed_ms, sources, codegen = [])
       @entry = entry
-      @types = types              # [{ "file", "line" (1-based), "col" (0-based), "type", "rbs" }]
-      @diagnostics = diagnostics  # [{ "file", "line", "col", "severity", "message" }]
+      @types = types              # [{ "file", "line" (1-based), "col" (0-based), "end_line", "end_col", "kind", "name", "type", "rbs" }]
+      @diagnostics = diagnostics  # [{ "file", "line", "col", "end_line", "end_col", "severity", "message", "slot", "param", "method" }]
+      @codegen = codegen          # [{ "file", "line", "col", "end_line", "end_col", "kind", "name", "dispatch" | "inlined" }]
       @rbs = rbs                  # the --emit-rbs text
       @c = c                      # the -S output, "" when the compile was refused
       @stderr = stderr
@@ -55,9 +59,91 @@ module SpinelQuery
       [s, e]
     end
 
+    # The records whose span contains (1-based line, 0-based col), tightest
+    # first. Records without an end never match.
+    def spans_at(records, file, line, col)
+      hits = records.select do |r|
+        next false if r["end_line"].nil? || !same_file?(r["file"], file)
+        after_start = line > r["line"] || (line == r["line"] && col >= r["col"])
+        before_end = line < r["end_line"] || (line == r["end_line"] && col < r["end_col"])
+        after_start && before_end
+      end
+      # Same span, a named node first: a block's StatementsNode covers exactly
+      # the call it is the body of.
+      hits.sort_by { |r| [(r["end_line"] - r["line"]) * 100000 + (r["end_col"] - r["col"]), r["name"].nil? ? 1 : 0] }
+    end
+
+    # What a hover says at a position: the tightest typed node, the calls
+    # enclosing it, and the codegen decision for the call and block there.
+    # nil when nothing is typed at the position. Falls back to the word
+    # heuristic (type_at) when the dump has no spans.
+    def hover_at(file, line, col)
+      spans = spans_at(@types, file, line, col)
+      if spans.empty?
+        types = type_at(file, line, col)
+        return nil if types.empty?
+        r = word_range(file, line, col)
+        return { "name" => line_text(file, line)[r[0]...r[1]], "kind" => nil, "rbs" => types.join(" | "), "range" => [line, r[0], line, r[1]], "chain" => [], "call" => nil, "block" => nil, "fallback" => true }
+      end
+      tight = spans[0]
+      chain = spans[1, 3].to_a.select { |r| r["kind"] == "CallNode" }
+      decisions = spans_at(@codegen, file, line, col)
+      {
+        "name" => tight["name"], "kind" => tight["kind"], "rbs" => tight["rbs"],
+        "range" => [tight["line"], tight["col"], tight["end_line"], tight["end_col"]],
+        "chain" => chain.map { |r| { "name" => r["name"], "rbs" => r["rbs"] } },
+        "call" => decisions.find { |d| d["kind"] == "CallNode" },
+        "block" => decisions.find { |d| d["kind"] == "BlockNode" },
+        "fallback" => false,
+      }
+    end
+
+    # The def a name at a position resolves to: for a call, the DefNode of
+    # that name (in the receiver's class when the RBS names one, else any);
+    # for a local or instance variable, its first write. nil when unknown
+    # or when the dump has no kinds.
+    def definition_at(file, line, col)
+      tight = spans_at(@types, file, line, col)[0]
+      return nil if tight.nil? || tight["name"].nil?
+      name = tight["name"]
+      case tight["kind"]
+      when "CallNode"
+        @types.find { |r| r["kind"] == "DefNode" && r["name"] == name }
+      when "LocalVariableReadNode", "LocalVariableWriteNode"
+        @types.find { |r| r["kind"] == "LocalVariableWriteNode" && r["name"] == name && same_file?(r["file"], file) }
+      when /InstanceVariable/
+        @types.find { |r| r["kind"] == "InstanceVariableWriteNode" && r["name"] == name }
+      when "DefNode"
+        tight
+      else
+        nil
+      end
+    end
+
+    # Every record naming the same thing as the one at a position: reads,
+    # writes, calls and the def, in source order.
+    def references_at(file, line, col)
+      tight = spans_at(@types, file, line, col)[0]
+      return [] if tight.nil? || tight["name"].nil?
+      name = tight["name"]
+      family = if tight["kind"] =~ /LocalVariable/ then /LocalVariable/
+               elsif tight["kind"] =~ /InstanceVariable/ then /InstanceVariable/
+               else /\A(CallNode|DefNode)\z/
+               end
+      @types.select { |r| r["name"] == name && r["kind"].to_s =~ family }
+            .sort_by { |r| [r["file"].to_s, r["line"], r["col"]] }
+    end
+
+    # The calls that did not take the direct path, and the blocks that
+    # became functions, in source order: the codegen lens as a list.
+    def slow_sites
+      @codegen.select { |d| (d["kind"] == "CallNode" && d["dispatch"] != "direct") || (d["kind"] == "BlockNode" && d["inlined"] == false) }
+              .sort_by { |d| [d["file"].to_s, d["line"], d["col"]] }
+    end
+
     # Types for the word at (file, 1-based line, 0-based col): the entries
     # that start inside the word, innermost first, distinct. Empty when
-    # nothing starts there.
+    # nothing starts there. The pre-#4522 answer, kept as the fallback.
     def type_at(file, line, col)
       text = line_text(file, line)
       bounds = word_at(text, col)
@@ -204,13 +290,14 @@ module SpinelQuery
         File.delete("#{stamp}.rbs") if File.exist?("#{stamp}.rbs")
         types = parsed ? parsed["types"] : []
         diags = parsed ? parsed["diagnostics"] : stderr_diagnostics(types_err, target)
+        codegen = parsed && parsed["codegen"] ? parsed["codegen"] : []
         if temp
-          [types, diags].each do |list|
+          [types, diags, codegen].each do |list|
             list.each { |e| e["file"] = path if e["file"] == temp || File.basename(e["file"].to_s) == File.basename(temp) }
           end
         end
         sources = { path => (text || (File.exist?(path) ? File.read(path) : "")) }
-        Snapshot.new(path, types, diags, rbs, c_rc == 0 ? c_out : "", types_err, types_rc, now_ms - started, sources)
+        Snapshot.new(path, types, diags, rbs, c_rc == 0 ? c_out : "", types_err, types_rc, now_ms - started, sources, codegen)
       ensure
         File.delete(temp) if temp && File.exist?(temp)
       end
