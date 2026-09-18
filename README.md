@@ -154,6 +154,10 @@ exactly the kind of report that turns into a field in `--emit-types`.
 - [matz/spinel#4522](https://github.com/matz/spinel/issues/4522) — the
   four `--emit-types` fields above; landed in adc34fd2 and d5b10053,
   documented in docs/emit-types.md, and consumed here.
+- Not yet raised: docs/emit-types.md says the RBS in `types` at a def
+  shows the whole signature, but a `DefNode` record's `rbs` is the def
+  expression's value (`Symbol`); the tools take signatures from
+  `--emit-rbs` instead. To fold into the next upstream request.
 
 ## It tracks spinel master
 
