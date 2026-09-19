@@ -116,6 +116,11 @@ async function runLsp(cmd, args) {
   c.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: src.replace("i * 2", "i * 2.5") }] });
   out.diags2 = (await c.next()).params;
   out.hints2 = (await c.request("textDocument/inlayHint", { textDocument: { uri }, range: {} })).result;
+  // An edit that breaks the parse (an unclosed def): the parse error is
+  // published, and hover still answers from the last analysis that parsed.
+  c.notify("textDocument/didChange", { textDocument: { uri, version: 3 }, contentChanges: [{ text: src.replace("attr_reader :x, :y", "def broken(\n  attr_reader :x, :y") }] });
+  out.diags3 = (await c.next()).params;
+  out.hover3 = (await c.request("textDocument/hover", { textDocument: { uri }, position: { line: l, character: col } })).result;
   await c.request("shutdown", null);
   c.notify("exit", null);
   out.stderr = c.stderr();
@@ -133,6 +138,9 @@ function checkLsp(label, o) {
   check(o.lenses?.some((x) => /slow path/.test(x.command.title)) && o.lenses?.some((x) => x.command.title === "fast path"), `${label}: code lenses mark fast and slow defs`);
   check(o.diags2?.diagnostics?.length >= 1, `${label}: didChange re-analyzes (${o.diags2?.diagnostics?.length} diagnostics)`);
   check(o.hints2?.some((h) => /Float/.test(h.label)), `${label}: after the edit a signature mentions Float (${o.hints2?.map((h) => h.label).join("; ")})`);
+  const perr = (o.diags3?.diagnostics || []).filter((d) => d.severity === 1);
+  check(perr.length >= 1, `${label}: a buffer that does not parse publishes the parse error (${perr.map((d) => `${d.range.start.line}:${d.range.start.character} ${d.message.slice(0, 40)}`).join("; ") || "none"})`);
+  check(/Integer/.test(o.hover3?.contents?.value || ""), `${label}: hover still answers from the last-good analysis while the buffer does not parse`);
   check(o.def?.range?.start?.line === DEF_LINE - 1 && o.def?.range?.start?.character === 2, `${label}: definition of the dist2 call -> ${JSON.stringify(o.def?.range?.start)}`);
   check(o.refs?.length === 3, `${label}: references of pts -> ${o.refs?.length}`);
   check(/dispatch of `dist2`: switch/.test(o.hoverCall?.contents?.value || ""), `${label}: hover on the call shows its dispatch`);

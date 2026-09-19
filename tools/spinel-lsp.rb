@@ -162,7 +162,15 @@ module SpinelLSP
       text = @docs[uri]
       return if text.nil?
       snap = @runner.analyze(path_of(uri), text)
-      @snaps[uri] = snap
+      # A buffer that did not parse has no types; its parse errors are
+      # published, and the last analysis that did parse keeps answering
+      # hover, hints and lenses (positions a few keystrokes stale) until
+      # the buffer parses again.
+      if snap.types.empty? && snap.refused? && @snaps[uri] && !@snaps[uri].types.empty?
+        log("   analyzed #{path_of(uri)}: no parse, keeping the last-good snapshot for answers")
+      else
+        @snaps[uri] = snap
+      end
       log("   analyzed #{path_of(uri)}: #{snap.types.length} types, #{snap.diagnostics.length} diagnostics, rc=#{snap.rc}, #{snap.elapsed_ms} ms")
       diags = snap.diagnostics.map do |d|
         line = [d["line"].to_i - 1, 0].max

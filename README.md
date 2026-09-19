@@ -131,6 +131,19 @@ With an older spinel that lacks the fields, hover falls back to the word
 under the cursor and the rest is absent (the inlay hints and lenses
 included).
 
+Two gaps found consuming these are
+[matz/spinel#4557](https://github.com/matz/spinel/issues/4557): a
+parameter has no record (go-to-definition on a parameter use finds
+nothing; hover on it gives the def's signature, not the slot's type), and
+a call names no callee (`definition` takes the first def of that name).
+A third is a pull request,
+[matz/spinel#4556](https://github.com/matz/spinel/pull/4556): a parse
+error had no position at all, and `--emit-types` wrote no JSON for a
+program that did not parse — which is most of the time a buffer is being
+typed into. The LSP keeps the last analysis that parsed for hover, hints
+and lenses while the buffer does not, and publishes the parse errors
+where the compiler places them (on line 1, with an older spinel).
+
 Still not said, because no dump can provide it until the analyzer records
 it: *why* a slot widened — matz's own design, per #4509. And nothing here
 completes: member tables for completion would be the next ask, once
@@ -180,6 +193,10 @@ exactly the kind of report that turns into a field in `--emit-types`.
   `analyze()` here and `Runner#analyze` in the tools make two spinel runs
   per analysis, not three, and the smoke gate holds the combined run's C
   byte-identical to `-S` alone on every sample.
+- [matz/spinel#4556](https://github.com/matz/spinel/pull/4556) — a parse
+  error at its file, line and column, and the JSON written on a parse
+  failure; open. [matz/spinel#4557](https://github.com/matz/spinel/issues/4557)
+  — parameter records and the resolved callee; open.
 
 ## It tracks spinel master
 

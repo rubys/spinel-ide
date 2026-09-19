@@ -91,15 +91,24 @@ export async function analyze(module, source, opts = {}) {
   };
 }
 
-// `spinel: FILE:LINE: message` lines, for the case where no JSON was written
-// (a parse failure stops before --emit-types has anything to write).
+// The stderr lines when no JSON was written: `spinel: FILE:LINE: message`,
+// and a parse error's `  FILE:LINE:COL: message` under "Parse errors in"
+// (placed since matz/spinel#4556, which also writes the JSON on a parse
+// failure; before it, a parse error had no position and lands on line 1).
 export function parseStderr(stderr, name) {
   const out = [];
   for (const line of stderr.split("\n")) {
+    const placed = line.match(/^  (.+?):(\d+):(\d+): (.*)$/);
+    if (placed) { out.push({ file: placed[1], line: Number(placed[2]), col: Number(placed[3]), severity: "error", message: placed[4] }); continue; }
     const m = line.match(/^spinel: (?:(.+?):(\d+): )?(.*)$/);
     if (!m) continue;
     if (/^\d+ refusals?$/.test(m[3])) continue;
-    out.push({ file: m[1] || name, line: m[2] ? Number(m[2]) : 1, col: 0, severity: "error", message: m[3] });
+    let message = m[3];
+    if (/^parse failed for /.test(message)) {
+      if (out.length) continue;
+      message = "parse failed (this spinel places no parse error; matz/spinel#4556 does)";
+    }
+    out.push({ file: m[1] || name, line: m[2] ? Number(m[2]) : 1, col: 0, severity: "error", message });
   }
   return out;
 }

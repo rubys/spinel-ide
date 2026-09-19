@@ -327,14 +327,24 @@ module SpinelQuery
       end
     end
 
-    # `spinel: FILE:LINE: message` lines when no JSON was written (a parse
-    # failure stops before --emit-types has anything to write).
+    # The stderr lines when no JSON was written: `spinel: FILE:LINE: message`,
+    # and a parse error's `  FILE:LINE:COL: message` under "Parse errors in"
+    # (placed since matz/spinel#4556, which also writes the JSON on a parse
+    # failure; before it, a parse error had no position and lands on line 1).
     def stderr_diagnostics(err, file)
       out = []
-      err.each_line do |l|
+      err.each_line do |raw|
+        l = raw.chomp
         if l =~ /\Aspinel: (?:(.+?):(\d+): )?(.*)\z/
-          next if $3 =~ /\A\d+ refusals?\z/
-          out << { "file" => $1 || file, "line" => $2 ? $2.to_i : 1, "col" => 0, "severity" => "error", "message" => $3.chomp }
+          f, ln, msg = $1, $2, $3
+          next if msg =~ /\A\d+ refusals?\z/
+          if msg =~ /\Aparse failed for /
+            next unless out.empty?
+            msg = "parse failed (this spinel places no parse error; matz/spinel#4556 does)"
+          end
+          out << { "file" => f || file, "line" => ln ? ln.to_i : 1, "col" => 0, "severity" => "error", "message" => msg }
+        elsif l =~ /\A  (.+?):(\d+):(\d+): (.*)\z/
+          out << { "file" => $1, "line" => $2.to_i, "col" => $3.to_i, "severity" => "error", "message" => $4 }
         end
       end
       out
