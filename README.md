@@ -53,7 +53,8 @@ path), `definition`, `references`, `version`. For Claude Code:
 ```
 
 **spinel-lsp** — read-only: diagnostics (refusals as errors, widenings as
-warnings on their slot, codegen's switch and boxed dispatches as hints),
+warnings on their slot with the *why* as related information, codegen's
+switch and boxed dispatches as hints),
 hover (the expression's type, its enclosing calls, its dispatch), inlay
 hints (the inferred signature after each `def`), code lenses (fast path /
 slow path per `def`), go-to-definition and references. A buffer
@@ -152,10 +153,31 @@ of the time a buffer is being typed into. The LSP keeps the last
 analysis that parsed for hover, hints and lenses while the buffer does
 not, and publishes the parse errors where the compiler places them.
 
-Still not said, because no dump can provide it until the analyzer records
-it: *why* a slot widened — matz's own design, per #4509. And nothing here
-completes: member tables for completion would be the next ask, once
-someone wants it.
+And the one #4509 set aside as wanting its own design, now built on the
+compiler's side and merged
+([matz/spinel#4562](https://github.com/matz/spinel/pull/4562)):
+
+8. **Why a slot widened.** A widening carries `why`: the chain from the
+   value that widened the slot to the expression the untyped was born
+   at, one hop per record — on the `point` sample, `o` was *passed
+   `pts[0]`, untyped, from `(1..5).map { |i| Point.new(i, i * 2) }`,
+   `Array[untyped]` — born here: no untyped input*. The LSP publishes the
+   hops as the warning's `relatedInformation` (an editor lists them under
+   it, each a click away), the MCP prints them under each widening in
+   `diagnostics`, and the page shows them under the marker and in the
+   Diagnostics tab. The same chain is on the command line, as `note:`
+   lines under `spinel --warn-widen`'s warnings. A chain ends *born
+   here*, *two kinds meet* (with the other side's site), *a transient*
+   (a value concrete in the end that was untyped on the round the slot
+   took it), *pessimistic* (an empty literal), *never bound*, *by
+   construction* (a `*rest`), or *untraced*. On a roundhouse-emitted
+   Rails-shape tree, 66% of 1,347 widened slots end definitively, and
+   grouping the chains by their root ranks the expressions through which
+   untyped enters the program — five of them behind ~130 warnings, led
+   by a `class << self; attr_accessor` on a module.
+
+Nothing here completes: member tables for completion would be the next
+ask, once someone wants it.
 
 ## Reporting what you see
 
@@ -210,8 +232,12 @@ exactly the kind of report that turns into a field in `--emit-types`.
   `--warn-widen`: the widening warnings on stderr during any compile,
   `spinel: app.rb:8:13: warning: parameter `o` of `dist2` widened to
   untyped`, so the boxed slow path is visible from the shell without an
-  analysis mode; merged. It is the surface a *why* would attach to as
-  `note:` lines under each warning.
+  analysis mode; merged.
+- [matz/spinel#4562](https://github.com/matz/spinel/pull/4562) — *why* a
+  slot widened: node-origin provenance at the type funnel, the chain as
+  `note:` lines under `--warn-widen` and as `why` on the `--emit-types`
+  record; merged after a cost review (the origin is derived only when a
+  consumer asks). Consumed here, see 8 above.
 
 ## It tracks spinel master
 

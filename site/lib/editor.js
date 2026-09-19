@@ -99,6 +99,19 @@ export const DISPATCH_TEXT = {
   boxed: "boxed: the receiver is a boxed value; a runtime helper dispatches over its tag at run time",
 };
 
+// One hop of a widening's why as text (matz/spinel#4562): what the value is
+// to the slot (passed / written / returned, then from), the source it
+// names, its type, and how the chain ends. `source` is the program's text.
+export function whyText(hop, source) {
+  const lines = (source || "").split("\n");
+  let snippet = lines[hop.line - 1] ?? "";
+  snippet = snippet.slice(hop.col);
+  if (hop.end_line === hop.line && hop.end_col != null) snippet = snippet.slice(0, hop.end_col - hop.col);
+  if (snippet.length > 48) snippet = snippet.slice(0, 48) + "…";
+  else if (hop.end_line != null && hop.end_line !== hop.line) snippet += "…";
+  return `${hop.role} \`${snippet}\` is ${hop.rbs}${hop.note || ""}`;
+}
+
 // `Point#dist2`, `Point.make`, or a bare `total` at the top level.
 export function methodLabel(t) {
   if (!t.owner || t.owner === "Object") return t.name;
@@ -207,12 +220,24 @@ export async function createEditor(container, { onChange }) {
             const word = d.severity !== "error" ? model.getWordAtPosition({ lineNumber: line, column: startColumn }) : null;
             endColumn = word ? word.endColumn : Math.max(startColumn + 1, model.getLineMaxColumn(line));
           }
-          return {
+          const marker = {
             startLineNumber: line, startColumn,
             endLineNumber: endLine, endColumn,
             message: d.message,
             severity: d.severity === "error" ? monaco.MarkerSeverity.Error : monaco.MarkerSeverity.Warning,
           };
+          // the why: each hop a related location, listed under the marker
+          // and a click away
+          if (d.why?.length) {
+            const text = model.getValue();
+            marker.relatedInformation = d.why.map((h) => ({
+              resource: model.uri,
+              startLineNumber: h.line, startColumn: h.col + 1,
+              endLineNumber: h.end_line ?? h.line, endColumn: (h.end_col ?? h.col) + 1,
+              message: whyText(h, text),
+            }));
+          }
+          return marker;
         });
         monaco.editor.setModelMarkers(model, "spinel", markers);
       },

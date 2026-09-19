@@ -5,7 +5,7 @@
 // compiled in the tab by a second worker holding the clang toolchain
 // (fetched on the first such Run, ~105 MB, then cached) from the C the
 // analysis just emitted, and run the same way.
-import { createEditor, createOutputView } from "../lib/editor.js";
+import { createEditor, createOutputView, whyText } from "../lib/editor.js";
 import { createClient } from "../lib/wasm-client.mjs";
 
 const $ = (id) => document.getElementById(id);
@@ -111,10 +111,23 @@ function render(r) {
     els.diagList.innerHTML = `<li class="empty">No refusals, nothing widened to untyped: every slot took the typed path.</li>`;
     return;
   }
+  const source = editor.getValue();
   for (const d of r.diagnostics) {
     const li = document.createElement("li");
     li.className = d.severity;
     li.innerHTML = `<span class="where">${d.file}:${d.line}</span> ${escapeHtml(d.message)}`;
+    // the why under a widening: the chain from the value that widened the
+    // slot to the expression the untyped was born at (matz/spinel#4562)
+    if (d.why?.length) {
+      const ul = document.createElement("ul");
+      ul.className = "why";
+      for (const h of d.why) {
+        const hli = document.createElement("li");
+        hli.innerHTML = `<span class="where">${h.file}:${h.line}</span> ${escapeHtml(whyText(h, source))}`;
+        ul.appendChild(hli);
+      }
+      li.appendChild(ul);
+    }
     els.diagList.appendChild(li);
   }
 }

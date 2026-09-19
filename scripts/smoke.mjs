@@ -97,6 +97,10 @@ for (const s of manifest) {
     const def = r.types.find((d) => d.kind === "DefNode" && d.name === "dist2");
     check(def?.owner === "Point" && def?.signature === "(untyped) -> Integer" && def?.widened === true,
       `point: the def carries its owner and signature (${def ? `${def.owner} ${def.signature} widened=${def.widened}` : "no DefNode"})`);
+    // the why (matz/spinel#4562): `o` passed `pts[0]`, from the map, born there
+    const why = warns.find((d) => d.param === "o")?.why || [];
+    check(why.length === 2 && why[0].role === "passed" && why[0].line === 12 && why[1].role === "from" && /born here/.test(why[1].note || ""),
+      `point: the widening carries its why (${why.map((h) => `${h.line}:${h.col} ${h.role} ${h.rbs}${h.note || ""}`).join("; ") || "none"})`);
   }
 }
 

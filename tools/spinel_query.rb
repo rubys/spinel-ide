@@ -26,7 +26,8 @@ module SpinelQuery
       @entry = entry
       @types = types              # [{ "file", "line" (1-based), "col" (0-based), "end_line", "end_col", "kind", "name", "type", "rbs" }]
                                   #   a DefNode also: "owner", "signature", "widened" (true when a slot degraded), "singleton"
-      @diagnostics = diagnostics  # [{ "file", "line", "col", "end_line", "end_col", "severity", "message", "slot", "param", "method" }]
+      @diagnostics = diagnostics  # [{ "file", "line", "col", "end_line", "end_col", "severity", "message", "slot", "param", "method",
+                                  #    "why" => [{ "file", "line", "col", "end_line", "end_col", "role", "rbs", "note" }] (a widening, since matz/spinel#4562) }]
       @codegen = codegen          # [{ "file", "line", "col", "end_line", "end_col", "kind", "name", "dispatch" | "inlined" }]
                                   #   a direct call also "callee" ("Point#dist2"), a switch "candidates" (in arm order)
       @rbs = rbs                  # the --emit-rbs text
@@ -220,6 +221,24 @@ module SpinelQuery
       out
     end
 
+    # One hop of a widening's why as a line of text: what the value is to
+    # the slot (passed / written / returned, then from), the source it
+    # names, its type, and how the chain ends (matz/spinel#4562 says the
+    # endings). `passed `pts[0]` is untyped`, `from `(1..5).map { … }` is
+    # Array[untyped] — born here: no untyped input`.
+    def why_text(hop)
+      text = line_text(hop["file"], hop["line"])
+      snippet = if text.nil? then "…"
+                else
+                  s = text[hop["col"].to_i..-1].to_s
+                  s = s[0...(hop["end_col"].to_i - hop["col"].to_i)] if hop["end_line"] == hop["line"] && hop["end_col"]
+                  s = s[0, 48] + "…" if s.length > 48
+                  s += "…" if hop["end_line"] && hop["end_line"] != hop["line"] && !s.end_with?("…")
+                  s
+                end
+      "#{hop['role']} `#{snippet}` is #{hop['rbs']}#{hop['note']}"
+    end
+
     # The C function(s) a method compiled to: `Class#meth` or `Class.meth`
     # or a bare top-level `meth`. spinel names them sp_<Class>_<meth> and
     # sp_<meth>, with a singleton as sp_<Class>_s_<meth>. Returns the text
@@ -263,7 +282,13 @@ module SpinelQuery
 
     def line_text(file, line)
       src = @sources[file]
-      src = @sources.values.first if src.nil? && @sources.length == 1
+      src = @sources.values.first if src.nil? && @sources.length == 1 && same_file?(@sources.keys.first, file)
+      if src.nil?
+        # a hop in a required file: read it beside the entry
+        cand = File.expand_path(file.to_s, File.dirname(@entry.to_s))
+        cand = file.to_s unless File.exist?(cand)
+        src = @sources[file] = (File.exist?(cand) ? File.read(cand) : nil)
+      end
       return nil if src.nil?
       lines = src.split("\n", -1)
       return nil if line < 1 || line > lines.length
@@ -332,9 +357,9 @@ module SpinelQuery
         diags = parsed ? parsed["diagnostics"] : stderr_diagnostics(types_err, target)
         codegen = parsed && parsed["codegen"] ? parsed["codegen"] : []
         if temp
-          [types, diags, codegen].each do |list|
-            list.each { |e| e["file"] = path if e["file"] == temp || File.basename(e["file"].to_s) == File.basename(temp) }
-          end
+          rename = lambda { |e| e["file"] = path if e["file"] == temp || File.basename(e["file"].to_s) == File.basename(temp) }
+          [types, diags, codegen].each { |list| list.each(&rename) }
+          diags.each { |d| (d["why"] || []).each(&rename) }
         end
         sources = { path => (text || (File.exist?(path) ? File.read(path) : "")) }
         Snapshot.new(path, types, diags, rbs, types_rc == 0 ? types_out : "", types_err, types_rc, now_ms - started, sources, codegen)

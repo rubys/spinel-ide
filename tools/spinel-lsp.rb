@@ -187,12 +187,18 @@ module SpinelLSP
           len = 1 if len < 1
           rng = range(line, col, line, col + len)
         end
-        {
+        diag = {
           "range" => rng,
           "severity" => d["severity"] == "error" ? 1 : 2,
           "source" => "spinel",
           "message" => d["message"],
         }
+        # the why (matz/spinel#4562): each hop a related location, which an
+        # editor lists under the warning and jumps to
+        if d["why"] && !d["why"].empty?
+          diag["relatedInformation"] = d["why"].map { |h| { "location" => location(uri, h), "message" => snap.why_text(h) } }
+        end
+        diag
       end
       # The codegen lens as diagnostics an editor renders quietly: a boxed
       # send is Information, a class switch a Hint, a block that became a

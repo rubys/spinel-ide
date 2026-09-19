@@ -74,6 +74,7 @@ function checkMcp(label, r) {
   check(by[1].result?.serverInfo?.name === "spinel-mcp", `${label}: initialize`);
   check(by[2].result?.tools?.length === 9, `${label}: tools/list has 9 tools`);
   check(/\d+ widening\(s\)/.test(text(by[3])) && /`total`/.test(text(by[3])) && /parameter `items`/.test(text(by[3])), `${label}: diagnostics on widening.rb name the slot`);
+  check(/passed `2\.5` is Float, where the slot was Integer \(two kinds meet: untyped\)/.test(text(by[3])) && /and `1` is Integer/.test(text(by[3])) && /born here/.test(text(by[3])), `${label}: diagnostics carry the why under each widening`);
   check(/`@x`: Integer/.test(text(by[4])), `${label}: type_at @x -> ${text(by[4]).split("\n")[0]}`);
   check(/@price: untyped/.test(text(by[5])) && /\[slow/.test(text(by[5])), `${label}: signatures mark the slow path`);
   check(/1 refusal/.test(text(by[6])) && /unsupported/.test(text(by[6])), `${label}: wont_compile on refusal.rb`);
@@ -139,6 +140,8 @@ function checkLsp(label, o) {
   check(o.init?.capabilities?.hoverProvider === true, `${label}: initialize advertises hover/inlayHint/codeLens`);
   const warns = (o.diags1?.diagnostics || []).filter((d) => d.severity === 2);
   check(warns.length === 1 && warns[0].range.start.character === 12 && /parameter `o`/.test(warns[0].message), `${label}: didOpen publishes the widening warning on its slot (${warns[0]?.range.start.line}:${warns[0]?.range.start.character})`);
+  const rel = warns[0]?.relatedInformation || [];
+  check(rel.length === 2 && rel[0].location.range.start.line === PUTS_LINE - 1 && /^passed `pts\[0\]` is untyped$/.test(rel[0].message) && /born here/.test(rel[1].message), `${label}: the warning's relatedInformation is the why (${rel.map((r) => r.message).join("; ") || "none"})`);
   const hints = (o.diags1?.diagnostics || []).filter((d) => d.source === "spinel codegen");
   check(hints.length === 3 && hints.every((d) => d.severity >= 3), `${label}: codegen decisions published as ${hints.length} hint diagnostics`);
   check(/Integer/.test(o.hover?.contents?.value || ""), `${label}: hover on @x -> ${(o.hover?.contents?.value || "none").replace(/\n/g, " ")}`);

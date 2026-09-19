@@ -20,7 +20,7 @@ module SpinelMCP
 
   TOOLS = [
     { "name" => "diagnostics",
-      "description" => "Compile a program with spinel and report every diagnostic: refusals (constructs spinel does not compile, severity error) and widenings (a parameter or return that fell to untyped, the boxed slow path; severity warning). Positions are 1-based lines and 0-based columns.",
+      "description" => "Compile a program with spinel and report every diagnostic: refusals (constructs spinel does not compile, severity error) and widenings (a parameter or return that fell to untyped, the boxed slow path; severity warning), and under each widening the why: the chain from the value that widened the slot to the expression the untyped was born at, ending born here / two kinds meet / a transient / never bound / by construction / untraced. Positions are 1-based lines and 0-based columns.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string", "description" => "the program's entry file" } }, "required" => ["file"] } },
     { "name" => "wont_compile",
       "description" => "Only the refusals: what in this program spinel will not compile, with the message naming the construct. Empty means the program compiles.",
@@ -186,7 +186,12 @@ module SpinelMCP
     def render_diagnostics(snap, list, file)
       head = "#{rel(file)}: #{snap.errors.length} refusal(s), #{snap.warnings.length} widening(s), analyzed in #{snap.elapsed_ms} ms"
       return head + "\n(no diagnostics)" if list.empty?
-      head + "\n" + list.map { |d| "#{d['severity']}: #{rel(d['file'])}:#{d['line']}:#{d['col']}: #{d['message']}" }.join("\n")
+      head + "\n" + list.map { |d|
+        line = "#{d['severity']}: #{rel(d['file'])}:#{d['line']}:#{d['col']}: #{d['message']}"
+        # the why: one line per hop, from the slot to where the untyped was born
+        (d["why"] || []).each { |h| line += "\n    #{rel(h['file'])}:#{h['line']}:#{h['col']}: #{snap.why_text(h)}" }
+        line
+      }.join("\n")
     end
 
     def resolve(file)
