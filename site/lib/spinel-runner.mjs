@@ -99,7 +99,7 @@ export function parseStderr(stderr, name) {
   const out = [];
   for (const line of stderr.split("\n")) {
     const placed = line.match(/^  (.+?):(\d+):(\d+): (.*)$/);
-    if (placed) { out.push({ file: placed[1], line: Number(placed[2]), col: Number(placed[3]), severity: "error", message: placed[4] }); continue; }
+    if (placed) { out.push({ file: placed[1], line: Number(placed[2]), col: Number(placed[3]) - 1, severity: "error", message: placed[4] }); continue; }   // stderr's column is 1-based
     const m = line.match(/^spinel: (?:(.+?):(\d+): )?(.*)$/);
     if (!m) continue;
     if (/^\d+ refusals?$/.test(m[3])) continue;

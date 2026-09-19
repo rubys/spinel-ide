@@ -344,7 +344,7 @@ module SpinelQuery
           end
           out << { "file" => f || file, "line" => ln ? ln.to_i : 1, "col" => 0, "severity" => "error", "message" => msg }
         elsif l =~ /\A  (.+?):(\d+):(\d+): (.*)\z/
-          out << { "file" => $1, "line" => $2.to_i, "col" => $3.to_i, "severity" => "error", "message" => $4 }
+          out << { "file" => $1, "line" => $2.to_i, "col" => $3.to_i - 1, "severity" => "error", "message" => $4 }   # stderr's column is 1-based
         end
       end
       out
