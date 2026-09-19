@@ -253,9 +253,11 @@ module SpinelLSP
       snap = @snaps[uri]
       return nil if snap.nil?
       pos = params["position"] || {}
-      d = snap.definition_at(path_of(uri), pos["line"].to_i + 1, pos["character"].to_i)
-      return nil if d.nil?
-      location(uri, d)
+      # One location for a bound call or a variable; every candidate of a
+      # switch, which an editor offers as a list.
+      defs = snap.definitions_at(path_of(uri), pos["line"].to_i + 1, pos["character"].to_i)
+      return nil if defs.empty?
+      defs.length == 1 ? location(uri, defs[0]) : defs.map { |d| location(uri, d) }
     end
 
     def references(params)

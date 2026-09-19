@@ -38,7 +38,7 @@ module SpinelMCP
       "description" => "The codegen lens: every call in the program that did not take the direct path (dispatched through a switch over the receiver's classes, or boxed and dispatched at run time) and every block compiled as a function of its own, with positions. The one call in a method that took the slow path is the one to look at.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" } }, "required" => ["file"] } },
     { "name" => "definition",
-      "description" => "Where the name at a position is defined: the def a call resolves to, or the first write of a local or instance variable.",
+      "description" => "Where the name at a position is defined: the def codegen bound a call to (every candidate, for a call dispatched through a switch), the parameter or nearest preceding write of a local, or the first write of an instance variable.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "line" => { "type" => "integer" }, "column" => { "type" => "integer" } }, "required" => ["file", "line", "column"] } },
     { "name" => "references",
       "description" => "Every read, write, call and def of the name at a position, in source order.",
@@ -140,13 +140,17 @@ module SpinelMCP
         return head + "\n(every call is direct and every block inlined)" if sites.empty?
         head + "\n" + sites.map { |d| d["kind"] == "CallNode" ? "#{rel(d['file'])}:#{d['line']}:#{d['col']} `#{d['name']}` -> #{d['dispatch']}" : "#{rel(d['file'])}:#{d['line']}:#{d['col']} block -> function" }.join("\n")
       when "definition"
-        d = snap.definition_at(file, args["line"].to_i, args["column"].to_i)
-        raise ToolError, "no definition found for the name at #{rel(file)}:#{args['line']}:#{args['column']}" if d.nil?
-        if d["signature"]
-          "#{rel(d['file'])}:#{d['line']}:#{d['col']} def `#{snap.method_label(d)}`: #{d['signature']}#{d['widened'] ? '  [slow: a slot widened to untyped]' : ''}"
-        else
-          "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']} `#{d['name']}`: #{d['rbs']}"
+        defs = snap.definitions_at(file, args["line"].to_i, args["column"].to_i)
+        raise ToolError, "no definition found for the name at #{rel(file)}:#{args['line']}:#{args['column']}" if defs.empty?
+        lines = defs.map do |d|
+          if d["signature"]
+            "#{rel(d['file'])}:#{d['line']}:#{d['col']} def `#{snap.method_label(d)}`: #{d['signature']}#{d['widened'] ? '  [slow: a slot widened to untyped]' : ''}"
+          else
+            "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']} `#{d['name']}`: #{d['rbs']}"
+          end
         end
+        lines.unshift("#{defs.length} candidates (a switch over the receiver's classes):") if defs.length > 1
+        lines.join("\n")
       when "references"
         refs = snap.references_at(file, args["line"].to_i, args["column"].to_i)
         raise ToolError, "no name at #{rel(file)}:#{args['line']}:#{args['column']}" if refs.empty?

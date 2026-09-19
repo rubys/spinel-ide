@@ -31,6 +31,8 @@ const DEF_LINE = pointSrc.findIndex((l) => /def dist2/.test(l)) + 1;
 const X_COL = pointSrc[DEF_LINE - 1].indexOf("@x");
 const PUTS_LINE = pointSrc.findIndex((l) => /^puts pts.map/.test(l)) + 1;
 const DIST2_COL = pointSrc[PUTS_LINE - 1].indexOf("dist2") + 1;
+const O_COL = pointSrc[DEF_LINE - 1].indexOf("(o)") + 1;          // the parameter `o`
+const O_USE_COL = pointSrc[DEF_LINE - 1].indexOf("o.x");          // its first use
 
 // ---- MCP ----
 const mcpSession = [
@@ -48,6 +50,8 @@ const mcpSession = [
   { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "definition", arguments: { file: "samples/point.rb", line: PUTS_LINE, column: DIST2_COL } } },
   { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "references", arguments: { file: "samples/point.rb", line: PUTS_LINE, column: 5 } } },
   { jsonrpc: "2.0", id: 13, method: "tools/call", params: { name: "type_at", arguments: { file: "samples/point.rb", line: DEF_LINE, column: 6 } } },
+  { jsonrpc: "2.0", id: 14, method: "tools/call", params: { name: "definition", arguments: { file: "samples/point.rb", line: DEF_LINE, column: O_USE_COL } } },
+  { jsonrpc: "2.0", id: 15, method: "tools/call", params: { name: "type_at", arguments: { file: "samples/point.rb", line: DEF_LINE, column: O_COL } } },
 ];
 const MCP_RESPONSES = mcpSession.filter((m) => m.id != null).length;
 
@@ -79,6 +83,8 @@ function checkMcp(label, r) {
   check(/`dist2` -> switch/.test(text(by[10])), `${label}: slow_sites lists dist2 as a switch`);
   check(/def `Point#dist2`: \(untyped\) -> Integer  \[slow/.test(text(by[11])), `${label}: definition of the dist2 call is its def, with its signature (${text(by[11])})`);
   check(/`Point#dist2`: \(untyped\) -> Integer/.test(text(by[13])), `${label}: type_at on a def is its signature (${text(by[13]).split("\n")[0]})`);
+  check(new RegExp(`:${DEF_LINE}:${O_COL} RequiredParameterNode \`o\`: untyped`).test(text(by[14])), `${label}: definition of a parameter's use is the parameter (${text(by[14])})`);
+  check(/`o`: untyped/.test(text(by[15])), `${label}: type_at on a parameter is the slot's type (${text(by[15]).split("\n")[0]})`);
   check(text(by[12]).split("\n").length === 3 && /LocalVariableWriteNode/.test(text(by[12])), `${label}: references of pts are its write and two reads`);
 }
 
@@ -112,6 +118,8 @@ async function runLsp(cmd, args) {
   out.refs = (await c.request("textDocument/references", { textDocument: { uri }, position: { line: pl, character: 5 }, context: { includeDeclaration: true } })).result;
   out.hoverCall = (await c.request("textDocument/hover", { textDocument: { uri }, position: { line: pl, character: dcol } })).result;
   out.hoverDef = (await c.request("textDocument/hover", { textDocument: { uri }, position: { line: l, character: 6 } })).result;
+  out.defParam = (await c.request("textDocument/definition", { textDocument: { uri }, position: { line: l, character: O_USE_COL } })).result;
+  out.refsParam = (await c.request("textDocument/references", { textDocument: { uri }, position: { line: l, character: O_USE_COL }, context: { includeDeclaration: true } })).result;
   // An edit that widens @y to Float: diagnostics come back for the new text.
   c.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: src.replace("i * 2", "i * 2.5") }] });
   out.diags2 = (await c.next()).params;
@@ -145,6 +153,8 @@ function checkLsp(label, o) {
   check(o.refs?.length === 3, `${label}: references of pts -> ${o.refs?.length}`);
   check(/dispatch of `dist2`: switch/.test(o.hoverCall?.contents?.value || ""), `${label}: hover on the call shows its dispatch`);
   check(/\*\*Point#dist2\*\* — `\(untyped\) -> Integer`/.test(o.hoverDef?.contents?.value || ""), `${label}: hover on the def shows its signature (${(o.hoverDef?.contents?.value || "none").split("\n")[0]})`);
+  check(o.defParam?.range?.start?.line === DEF_LINE - 1 && o.defParam?.range?.start?.character === O_COL, `${label}: definition of a parameter's use -> ${JSON.stringify(o.defParam?.range?.start)}`);
+  check(o.refsParam?.length === 3, `${label}: references of a parameter include its declaration (${o.refsParam?.length})`);
   check(!o.stderr, `${label}: no stderr${o.stderr ? ": " + o.stderr.slice(0, 200) : ""}`);
 }
 

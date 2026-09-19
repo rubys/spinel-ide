@@ -28,6 +28,7 @@ module SpinelQuery
                                   #   a DefNode also: "owner", "signature", "widened" (true when a slot degraded), "singleton"
       @diagnostics = diagnostics  # [{ "file", "line", "col", "end_line", "end_col", "severity", "message", "slot", "param", "method" }]
       @codegen = codegen          # [{ "file", "line", "col", "end_line", "end_col", "kind", "name", "dispatch" | "inlined" }]
+                                  #   a direct call also "callee" ("Point#dist2"), a switch "candidates" (in arm order)
       @rbs = rbs                  # the --emit-rbs text
       @c = c                      # the -S output, "" when the compile was refused
       @stderr = stderr
@@ -105,26 +106,41 @@ module SpinelQuery
       }
     end
 
-    # The def a name at a position resolves to: for a call, the DefNode of
-    # that name (in the receiver's class when the RBS names one, else any);
-    # for a local or instance variable, its first write. nil when unknown
+    # The defs a name at a position resolves to, in source order. For a
+    # call, the def codegen bound it to (`callee` on the codegen record) or
+    # the switch's `candidates` (matz/spinel 18873103), else any def of the
+    # name; for a local, the nearest preceding write or parameter of that
+    # name (a parameter has its own record since 18873103), else its first
+    # write; for an instance variable, its first write. Empty when unknown
     # or when the dump has no kinds.
-    def definition_at(file, line, col)
+    def definitions_at(file, line, col)
       tight = spans_at(@types, file, line, col)[0]
-      return nil if tight.nil? || tight["name"].nil?
+      return [] if tight.nil? || tight["name"].nil?
       name = tight["name"]
       case tight["kind"]
       when "CallNode"
-        @types.find { |r| r["kind"] == "DefNode" && r["name"] == name }
+        decision = spans_at(@codegen, file, line, col).find { |d| d["kind"] == "CallNode" && d["name"] == name }
+        labels = decision ? (decision["candidates"] || (decision["callee"] ? [decision["callee"]] : [])) : []
+        defs = @types.select { |r| r["kind"] == "DefNode" && r["name"] == name }
+        return defs if labels.empty?
+        labels.map { |l| defs.find { |r| method_label(r) == l } }.compact
       when "LocalVariableReadNode", "LocalVariableWriteNode"
-        @types.find { |r| r["kind"] == "LocalVariableWriteNode" && r["name"] == name && same_file?(r["file"], file) }
+        decls = @types.select { |r| r["name"] == name && same_file?(r["file"], file) && (r["kind"] == "LocalVariableWriteNode" || r["kind"].to_s.end_with?("ParameterNode")) }
+        before = decls.select { |r| r["line"] < line || (r["line"] == line && r["col"] <= col) }
+        d = before.last || decls.first
+        d ? [d] : []
       when /InstanceVariable/
-        @types.find { |r| r["kind"] == "InstanceVariableWriteNode" && r["name"] == name }
-      when "DefNode"
-        tight
+        d = @types.find { |r| r["kind"] == "InstanceVariableWriteNode" && r["name"] == name }
+        d ? [d] : []
+      when "DefNode", /ParameterNode\z/
+        [tight]
       else
-        nil
+        []
       end
+    end
+
+    def definition_at(file, line, col)
+      definitions_at(file, line, col)[0]
     end
 
     # Every record naming the same thing as the one at a position: reads,
@@ -133,7 +149,7 @@ module SpinelQuery
       tight = spans_at(@types, file, line, col)[0]
       return [] if tight.nil? || tight["name"].nil?
       name = tight["name"]
-      family = if tight["kind"] =~ /LocalVariable/ then /LocalVariable/
+      family = if tight["kind"] =~ /LocalVariable|ParameterNode/ then /LocalVariable|ParameterNode/
                elsif tight["kind"] =~ /InstanceVariable/ then /InstanceVariable/
                else /\A(CallNode|DefNode)\z/
                end

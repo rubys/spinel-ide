@@ -131,18 +131,26 @@ With an older spinel that lacks the fields, hover falls back to the word
 under the cursor and the rest is absent (the inlay hints and lenses
 included).
 
-Two gaps found consuming these are
-[matz/spinel#4557](https://github.com/matz/spinel/issues/4557): a
-parameter has no record (go-to-definition on a parameter use finds
-nothing; hover on it gives the def's signature, not the slot's type), and
-a call names no callee (`definition` takes the first def of that name).
-A third is a pull request,
-[matz/spinel#4556](https://github.com/matz/spinel/pull/4556): a parse
-error had no position at all, and `--emit-types` wrote no JSON for a
-program that did not parse — which is most of the time a buffer is being
-typed into. The LSP keeps the last analysis that parsed for hover, hints
-and lenses while the buffer does not, and publishes the parse errors
-where the compiler places them (on line 1, with an older spinel).
+Two more landed the same day, asked as
+[matz/spinel#4557](https://github.com/matz/spinel/issues/4557) and
+answered in 18873103:
+
+6. **A record per parameter** (`RequiredParameterNode` and the other
+   kinds, at its span, with the slot's type): hover on a parameter says
+   the slot's type (`untyped` where the warning sits); go-to-definition
+   on a parameter's use lands on the parameter; references include it.
+7. **The callee** (`callee` on a `direct` codegen record, `candidates`
+   on a `switch`): go-to-definition on a call lands on the def codegen
+   bound it to — every candidate, for a switch — not the first def of
+   that name.
+
+And a parse error has a position:
+[matz/spinel#4556](https://github.com/matz/spinel/pull/4556) prints
+each at `file:line:col` and writes the `--emit-types` JSON for a program
+that does not parse, with the errors as its diagnostics — which is most
+of the time a buffer is being typed into. The LSP keeps the last
+analysis that parsed for hover, hints and lenses while the buffer does
+not, and publishes the parse errors where the compiler places them.
 
 Still not said, because no dump can provide it until the analyzer records
 it: *why* a slot widened — matz's own design, per #4509. And nothing here
@@ -195,8 +203,15 @@ exactly the kind of report that turns into a field in `--emit-types`.
   byte-identical to `-S` alone on every sample.
 - [matz/spinel#4556](https://github.com/matz/spinel/pull/4556) — a parse
   error at its file, line and column, and the JSON written on a parse
-  failure; open. [matz/spinel#4557](https://github.com/matz/spinel/issues/4557)
-  — parameter records and the resolved callee; open.
+  failure; merged. [matz/spinel#4557](https://github.com/matz/spinel/issues/4557)
+  — parameter records and the resolved callee; landed in 18873103, see 6
+  and 7 above.
+- [matz/spinel#4561](https://github.com/matz/spinel/pull/4561) —
+  `--warn-widen`: the widening warnings on stderr during any compile,
+  `spinel: app.rb:8:13: warning: parameter `o` of `dist2` widened to
+  untyped`, so the boxed slow path is visible from the shell without an
+  analysis mode; merged. It is the surface a *why* would attach to as
+  `note:` lines under each warning.
 
 ## It tracks spinel master
 
