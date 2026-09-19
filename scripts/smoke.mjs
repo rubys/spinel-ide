@@ -39,7 +39,6 @@ let failures = 0;
 const ok = (msg) => console.log(`  ok  ${msg}`);
 const fail = (msg) => { failures++; console.log(`FAIL  ${msg}`); };
 const check = (cond, msg) => (cond ? ok(msg) : fail(msg));
-const note = (msg) => console.log(`note  ${msg}`);   // observed, not gated
 
 const manifest = JSON.parse(await readFile(path.join(siteDir, "samples", "manifest.json"), "utf8"));
 const compiler = await WebAssembly.compile(await readFile(path.join(siteDir, "lib", "spinel.wasm")));
@@ -50,10 +49,12 @@ const v = await runWasi(compiler, "spinel", ["--version"]);
 check(v.rc === 0 && /^spinel /.test(v.stdout), `spinel.wasm --version: ${v.stdout.trim() || v.stderr.trim()}`);
 
 const sources = {};
+const plainC = {};   // each sample's `-S` alone, for the analyze() check below
 for (const s of manifest) {
   const src = await readFile(path.join(siteDir, "samples", s.file), "utf8");
   sources[s.name] = src;
   const wasmC = await runWasi(compiler, "spinel", [s.file, "-S"], { [s.file]: src });
+  plainC[s.name] = wasmC.rc === 0 ? wasmC.stdout : "";
   let nativeC = "", nativeRc = 0;
   try {
     // Same bare filename from the samples dir, so the #line paths agree.
@@ -78,6 +79,10 @@ for (const s of manifest) {
   } else {
     check(errs.length === 0, `${s.name}: no refusals (${errs.map((d) => d.message).join("; ")})`);
     check(r.c.length > 0, `${s.name}: C emitted`);
+    // analyze() takes its C from `--emit-types -S` (matz/spinel 26320875,
+    // #4555): the one compile's JSON and C. It must be the C -S alone
+    // emits, which section 1 held byte-identical to the native compiler's.
+    check(r.c === plainC[s.name], `${s.name}: the C of --emit-types -S is the C of -S alone`);
   }
   if (s.name === "widening") {
     check(warns.some((d) => /widened to untyped/.test(d.message)), `widening: the slow-path warning is present (${warns.length} warnings)`);
@@ -92,12 +97,6 @@ for (const s of manifest) {
     const def = r.types.find((d) => d.kind === "DefNode" && d.name === "dist2");
     check(def?.owner === "Point" && def?.signature === "(untyped) -> Integer" && def?.widened === true,
       `point: the def carries its owner and signature (${def ? `${def.owner} ${def.signature} widened=${def.widened}` : "no DefNode"})`);
-    // matz/spinel 26320875 lets one run write the JSON and the C (--emit-types
-    // -S). Not adopted yet: --emit-types forces SPINEL_DEBUG, so the C is the
-    // debug compile's (no static/always_inline, backtraces on), not the C
-    // this page shows and builds. Reported; this line says when it changes.
-    const one = await runWasi(compiler, "spinel", [s.file, "--emit-types", "-o", "main.json", "-S"], { packages, lib: { "libspinel_rt.a": new Uint8Array([0]) }, [s.file]: sources[s.name] });
-    note(`point: --emit-types -S in one run ${one.rc === 0 && one.stdout === r.c ? "matches -S: analyze() could drop a pass" : "still emits the debug compile's C: analyze() keeps its -S pass"}`);
   }
 }
 

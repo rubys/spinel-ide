@@ -7,7 +7,7 @@
 // spinel is a command, not a reactor: every invocation is a fresh instance
 // of a module compiled once. Instantiation is ~10 ms; a compile of a
 // benchmark-sized program is 15-160 ms, so an edit -> analyze loop can afford
-// the three passes analyze() makes (--emit-types, --emit-rbs, -S).
+// the two passes analyze() makes (--emit-types -S, --emit-rbs).
 import { WASI, File, OpenFile, ConsoleStdout, PreopenDirectory, Directory } from "./wasi/index.js";
 
 const enc = new TextEncoder();
@@ -59,11 +59,10 @@ export const text = (bytes) => (bytes ? dec.decode(bytes) : null);
 
 // One analysis of a single-file program: the per-position types and the
 // diagnostics (refusals as errors, widenings as warnings), the inferred RBS,
-// and the emitted C. Three spinel invocations; each is independent, so a
-// refusal that stops -S (nothing written) still leaves types and RBS.
-// (--emit-types -S, matz/spinel 26320875, would fold the C into the first
-// run, but that run's C is the debug compile's: --emit-types sets
-// SPINEL_DEBUG, which codegen also reads. See the README's status list.)
+// and the emitted C. Two spinel invocations: `--emit-types -o main.json -S`
+// writes the JSON and prints the C of that one compile (matz/spinel
+// 26320875 and #4555; a refusal exits 1 with the refusals in the JSON and
+// no C), and --emit-rbs writes the signatures document the RBS tab shows.
 //
 // opts.packages: a tree of the bundled packages' Ruby sources
 // (packages/<name>/...), so `require "json"` resolves. The compiler looks
@@ -75,9 +74,8 @@ export async function analyze(module, source, opts = {}) {
     ? { packages: opts.packages, lib: { "libspinel_rt.a": new Uint8Array([0]) } }
     : {};
   const t0 = performance.now();
-  const types = await runWasi(module, "spinel", [name, "--emit-types", "-o", "main.json"], { ...base, [name]: source });
+  const types = await runWasi(module, "spinel", [name, "--emit-types", "-o", "main.json", "-S"], { ...base, [name]: source });
   const rbs = await runWasi(module, "spinel", [name, "--emit-rbs", "-o", "main.rbs"], { ...base, [name]: source });
-  const c = await runWasi(module, "spinel", [name, "-S"], { ...base, [name]: source });
   let parsed = null;
   const json = text(types.files["main.json"]);
   if (json) { try { parsed = JSON.parse(json); } catch { parsed = null; } }
@@ -86,7 +84,7 @@ export async function analyze(module, source, opts = {}) {
     codegen: parsed?.codegen ?? [],   // per-call dispatch and per-block inlining, since matz/spinel#4522
     diagnostics: parsed?.diagnostics ?? parseStderr(types.stderr, name),
     rbs: text(rbs.files["main.rbs"]) ?? "",
-    c: c.rc === 0 ? c.stdout : "",
+    c: types.rc === 0 ? types.stdout : "",
     stderr: types.stderr,
     rc: types.rc,
     elapsed_ms: Math.round(performance.now() - t0),

@@ -296,9 +296,11 @@ module SpinelQuery
       end
       begin
         stamp = "#{@tmpdir}/spinel-query-#{Process.pid}-#{@seq += 1}"
-        types_out, types_err, types_rc = run([@spinel, target, "--emit-types", "-o", "#{stamp}.json"])
+        # One compile writes the JSON and prints its C (-S beside
+        # --emit-types, matz/spinel 26320875 and #4555); a refusal exits 1
+        # with the refusals in the JSON and no C.
+        types_out, types_err, types_rc = run([@spinel, target, "--emit-types", "-o", "#{stamp}.json", "-S"])
         rbs_out, _rbs_err, _rbs_rc = run([@spinel, target, "--emit-rbs", "-o", "#{stamp}.rbs"])
-        c_out, _c_err, c_rc = run([@spinel, target, "-S"])
         parsed = nil
         if File.exist?("#{stamp}.json")
           begin
@@ -319,7 +321,7 @@ module SpinelQuery
           end
         end
         sources = { path => (text || (File.exist?(path) ? File.read(path) : "")) }
-        Snapshot.new(path, types, diags, rbs, c_rc == 0 ? c_out : "", types_err, types_rc, now_ms - started, sources, codegen)
+        Snapshot.new(path, types, diags, rbs, types_rc == 0 ? types_out : "", types_err, types_rc, now_ms - started, sources, codegen)
       ensure
         File.delete(temp) if temp && File.exist?(temp)
       end

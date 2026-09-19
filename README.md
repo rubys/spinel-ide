@@ -171,19 +171,15 @@ exactly the kind of report that turns into a field in `--emit-types`.
   mismatch this README had noted (the RBS at a def was the def
   expression's `Symbol`); consumed here, see 5 above.
 - [26320875](https://github.com/matz/spinel/commit/2632087587c99a85c1bfe39e1c397f01c656d33a)
-  — `--emit-types -o x.json -S` writes the JSON and the C of one compile,
-  so a consumer showing both needs one run, not two. **Not adopted yet**:
-  `--emit-types` forces `SPINEL_DEBUG=1` for node positions, and codegen
-  reads the same flag, so the C that run prints is the debug compile's —
-  methods lose `static inline __attribute__((always_inline))` and the
-  backtrace substrate is switched on — not the C `-S` alone emits, which
-  is what the C tab shows, Build & run compiles and the smoke gate holds
-  byte-identical to the native compiler's. Positions only need
-  `SPINEL_LINE_MAP`, under which the JSON is byte-identical and the C
-  matches `-S`: [matz/spinel#4555](https://github.com/matz/spinel/pull/4555).
-  `scripts/smoke.mjs` prints a `note` line saying which way it is, so the
-  day it changes the build log says so and `analyze()` can drop its `-S`
-  pass.
+  — `--emit-types -o x.json -S` writes the JSON and the C of one compile.
+  As landed, the C was the debug compile's (`--emit-types` forced
+  `SPINEL_DEBUG`, which codegen reads too: no `static`/`always_inline`,
+  backtraces on), not what `-S` alone emits and this page shows and
+  builds; [matz/spinel#4555](https://github.com/matz/spinel/pull/4555)
+  made it force the line map instead, merged the same day. Consumed:
+  `analyze()` here and `Runner#analyze` in the tools make two spinel runs
+  per analysis, not three, and the smoke gate holds the combined run's C
+  byte-identical to `-S` alone on every sample.
 
 ## It tracks spinel master
 
@@ -217,7 +213,7 @@ The footer of the page names the spinel commit it was built from.
 | Path | Role |
 |---|---|
 | `site/ide/` | the page (`index.html`, `ide.js`) |
-| `site/lib/spinel-runner.mjs` | runs a WASI command module against an in-memory filesystem; `analyze()` is the three spinel passes |
+| `site/lib/spinel-runner.mjs` | runs a WASI command module against an in-memory filesystem; `analyze()` is the two spinel passes (`--emit-types -S`, `--emit-rbs`) |
 | `site/lib/clang-runner.mjs` | compiles emitted C to a wasm32-wasi module with the @yowasp/clang toolchain over `rt.tar` (runtime headers, `libspinel_rt.a`, the packages' wasi objects) |
 | `site/lib/worker.mjs`, `clang-worker.mjs`, `wasm-client.mjs` | the analyzer worker, the toolchain worker (spawned on the first Build & run), and their watchdog client (from roundhouse) |
 | `site/lib/editor.js` | Monaco via CDN with a textarea fallback; the hover resolves spinel's start-keyed types to the word under the cursor |
