@@ -180,9 +180,10 @@ exactly the kind of report that turns into a field in `--emit-types`.
   is what the C tab shows, Build & run compiles and the smoke gate holds
   byte-identical to the native compiler's. Positions only need
   `SPINEL_LINE_MAP`, under which the JSON is byte-identical and the C
-  matches `-S`. To raise upstream; `scripts/smoke.mjs` prints a `note`
-  line saying which way it is, so the day it changes the build log says
-  so and `analyze()` can drop its `-S` pass.
+  matches `-S`: [matz/spinel#4555](https://github.com/matz/spinel/pull/4555).
+  `scripts/smoke.mjs` prints a `note` line saying which way it is, so the
+  day it changes the build log says so and `analyze()` can drop its `-S`
+  pass.
 
 ## It tracks spinel master
 
