@@ -7,8 +7,10 @@
 # compiler; the contract is what `spinel` prints. Since matz/spinel#4522
 # every record carries a span, a kind and a name, a widening names its
 # slot, and a `codegen` array says what codegen decided at each call and
-# block (docs/emit-types.md); an older spinel without those falls back to
-# a start position and the word under the cursor.
+# block; since 62a176b1 a `DefNode` record carries the method's `owner` and
+# `signature` (docs/emit-types.md). An older spinel without those falls
+# back to a start position and the word under the cursor, and places no
+# signatures.
 #
 # Written in the spinel subset so the tracker can compile it with spinel
 # (`spinel tools/spinel-mcp.rb -o spinel-mcp`), and plain enough that
@@ -23,6 +25,7 @@ module SpinelQuery
     def initialize(entry, types, diagnostics, rbs, c, stderr, rc, elapsed_ms, sources, codegen = [])
       @entry = entry
       @types = types              # [{ "file", "line" (1-based), "col" (0-based), "end_line", "end_col", "kind", "name", "type", "rbs" }]
+                                  #   a DefNode also: "owner", "signature", "widened" (true when a slot degraded), "singleton"
       @diagnostics = diagnostics  # [{ "file", "line", "col", "end_line", "end_col", "severity", "message", "slot", "param", "method" }]
       @codegen = codegen          # [{ "file", "line", "col", "end_line", "end_col", "kind", "name", "dispatch" | "inlined" }]
       @rbs = rbs                  # the --emit-rbs text
@@ -88,8 +91,12 @@ module SpinelQuery
       tight = spans[0]
       chain = spans[1, 3].to_a.select { |r| r["kind"] == "CallNode" }
       decisions = spans_at(@codegen, file, line, col)
+      # A def's own type is the def expression's value (a Symbol); what a
+      # hover on it wants is the method type it declares.
+      is_def = tight["kind"] == "DefNode" && !tight["signature"].nil?
       {
-        "name" => tight["name"], "kind" => tight["kind"], "rbs" => tight["rbs"],
+        "name" => is_def ? method_label(tight) : tight["name"], "kind" => tight["kind"],
+        "rbs" => is_def ? tight["signature"] : tight["rbs"],
         "range" => [tight["line"], tight["col"], tight["end_line"], tight["end_col"]],
         "chain" => chain.map { |r| { "name" => r["name"], "rbs" => r["rbs"] } },
         "call" => decisions.find { |d| d["kind"] == "CallNode" },
@@ -161,6 +168,21 @@ module SpinelQuery
     # [start_col, end_col) of the word at a position, for a hover range.
     def word_range(file, line, col)
       word_at(line_text(file, line), col)
+    end
+
+    # The defs the compiler placed, in source order: the DefNode records
+    # that carry a `signature` (empty with an older spinel).
+    def defs
+      @types.select { |r| r["kind"] == "DefNode" && !r["signature"].nil? }
+            .sort_by { |r| [r["file"].to_s, r["line"], r["col"]] }
+    end
+
+    # `Point#dist2`, `Point.make`, or a bare `total` at the top level, from
+    # a DefNode record.
+    def method_label(r)
+      owner = r["owner"]
+      return r["name"].to_s if owner.nil? || owner == "Object"
+      owner + (r["singleton"] ? "." : "#") + r["name"].to_s
     end
 
     # The --emit-rbs text as records: one per method, with its class, the

@@ -26,7 +26,7 @@ module SpinelMCP
       "description" => "Only the refusals: what in this program spinel will not compile, with the message naming the construct. Empty means the program compiles.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" } }, "required" => ["file"] } },
     { "name" => "type_at",
-      "description" => "The type spinel inferred for the expression at a position (1-based line, 0-based column), as RBS: the tightest node containing the position, the calls enclosing it, and what codegen decided for the call there (direct / switch / boxed). `untyped` is the boxed slow path.",
+      "description" => "The type spinel inferred for the expression at a position (1-based line, 0-based column), as RBS: the tightest node containing the position, the calls enclosing it, and what codegen decided for the call there (direct / switch / boxed); on a def, the method's inferred signature. `untyped` is the boxed slow path.",
       "inputSchema" => { "type" => "object", "properties" => { "file" => { "type" => "string" }, "line" => { "type" => "integer" }, "column" => { "type" => "integer" } }, "required" => ["file", "line", "column"] } },
     { "name" => "signatures",
       "description" => "The inferred signatures of every method and instance variable, as RBS, with each method marked fast (typed C) or slow (a slot widened to untyped). Optionally only one class.",
@@ -142,7 +142,11 @@ module SpinelMCP
       when "definition"
         d = snap.definition_at(file, args["line"].to_i, args["column"].to_i)
         raise ToolError, "no definition found for the name at #{rel(file)}:#{args['line']}:#{args['column']}" if d.nil?
-        "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']} `#{d['name']}`: #{d['rbs']}"
+        if d["signature"]
+          "#{rel(d['file'])}:#{d['line']}:#{d['col']} def `#{snap.method_label(d)}`: #{d['signature']}#{d['widened'] ? '  [slow: a slot widened to untyped]' : ''}"
+        else
+          "#{rel(d['file'])}:#{d['line']}:#{d['col']} #{d['kind']} `#{d['name']}`: #{d['rbs']}"
+        end
       when "references"
         refs = snap.references_at(file, args["line"].to_i, args["column"].to_i)
         raise ToolError, "no name at #{rel(file)}:#{args['line']}:#{args['column']}" if refs.empty?

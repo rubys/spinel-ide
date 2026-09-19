@@ -116,8 +116,20 @@ and the consumers use them:
    them in a Codegen tab; the LSP publishes them as hint-severity
    diagnostics; the MCP has `slow_sites`.
 
+A fifth landed unasked, the day after
+([62a176b1](https://github.com/matz/spinel/commit/62a176b10160bde1104275c4572de810dcac118a)):
+
+5. **The def's signature**, placed: a `DefNode` record carries its
+   `owner`, its `signature` (the text `--emit-rbs` writes for that method)
+   and `widened`. Hovering a `def` on the page, in the LSP or through
+   `type_at` says `Point#dist2 — (untyped) -> Integer` rather than the
+   def expression's own `Symbol`; the LSP's inlay hints and code lenses
+   are placed by the record instead of by a text scan for `def` lines
+   that guessed the enclosing class from indentation.
+
 With an older spinel that lacks the fields, hover falls back to the word
-under the cursor and the rest is absent.
+under the cursor and the rest is absent (the inlay hints and lenses
+included).
 
 Still not said, because no dump can provide it until the analyzer records
 it: *why* a slot widened — matz's own design, per #4509. And nothing here
@@ -154,10 +166,23 @@ exactly the kind of report that turns into a field in `--emit-types`.
 - [matz/spinel#4522](https://github.com/matz/spinel/issues/4522) — the
   four `--emit-types` fields above; landed in adc34fd2 and d5b10053,
   documented in docs/emit-types.md, and consumed here.
-- Not yet raised: docs/emit-types.md says the RBS in `types` at a def
-  shows the whole signature, but a `DefNode` record's `rbs` is the def
-  expression's value (`Symbol`); the tools take signatures from
-  `--emit-rbs` instead. To fold into the next upstream request.
+- [62a176b1](https://github.com/matz/spinel/commit/62a176b10160bde1104275c4572de810dcac118a)
+  — a `DefNode` record carries `owner` and `signature`, which closes the
+  mismatch this README had noted (the RBS at a def was the def
+  expression's `Symbol`); consumed here, see 5 above.
+- [26320875](https://github.com/matz/spinel/commit/2632087587c99a85c1bfe39e1c397f01c656d33a)
+  — `--emit-types -o x.json -S` writes the JSON and the C of one compile,
+  so a consumer showing both needs one run, not two. **Not adopted yet**:
+  `--emit-types` forces `SPINEL_DEBUG=1` for node positions, and codegen
+  reads the same flag, so the C that run prints is the debug compile's —
+  methods lose `static inline __attribute__((always_inline))` and the
+  backtrace substrate is switched on — not the C `-S` alone emits, which
+  is what the C tab shows, Build & run compiles and the smoke gate holds
+  byte-identical to the native compiler's. Positions only need
+  `SPINEL_LINE_MAP`, under which the JSON is byte-identical and the C
+  matches `-S`. To raise upstream; `scripts/smoke.mjs` prints a `note`
+  line saying which way it is, so the day it changes the build log says
+  so and `analyze()` can drop its `-S` pass.
 
 ## It tracks spinel master
 

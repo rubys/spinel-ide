@@ -99,14 +99,26 @@ export const DISPATCH_TEXT = {
   boxed: "boxed: the receiver is a boxed value; a runtime helper dispatches over its tag at run time",
 };
 
+// `Point#dist2`, `Point.make`, or a bare `total` at the top level.
+export function methodLabel(t) {
+  if (!t.owner || t.owner === "Object") return t.name;
+  return t.owner + (t.singleton ? "." : "#") + t.name;
+}
+
 function hoverMarkdown(h) {
   const t = h.tight;
-  const label = t.name ? `**${t.name}**` : `*${t.kind.replace(/Node$/, "")}*`;
-  const lines = [`${label} — \`${t.rbs}\``];
+  // A def's own type is the def expression's value (a Symbol); the hover
+  // wants the method type it declares, which a DefNode carries since
+  // spinel 62a176b1.
+  const isDef = t.kind === "DefNode" && t.signature != null;
+  const name = isDef ? methodLabel(t) : t.name;
+  const rbs = isDef ? t.signature : t.rbs;
+  const label = name ? `**${name}**` : `*${t.kind.replace(/Node$/, "")}*`;
+  const lines = [`${label} — \`${rbs}\``];
   if (h.chain.length) lines.push("in " + h.chain.map((r) => `\`${r.name}\` → \`${r.rbs}\``).join(", "));
   if (h.call) lines.push(`dispatch of \`${h.call.name}\`: ${DISPATCH_TEXT[h.call.dispatch] || h.call.dispatch}`);
   if (h.block) lines.push(h.block.inlined ? "block: inlined into its caller" : "block: a function of its own (a proc, lambda, Fiber or Thread body)");
-  if (t.rbs === "untyped" || /untyped/.test(t.rbs)) lines.push("_untyped: the boxed slow path_");
+  if (/untyped/.test(rbs)) lines.push("_untyped: the boxed slow path_");
   return lines.map((l) => ({ value: l }));
 }
 

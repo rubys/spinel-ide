@@ -39,6 +39,7 @@ let failures = 0;
 const ok = (msg) => console.log(`  ok  ${msg}`);
 const fail = (msg) => { failures++; console.log(`FAIL  ${msg}`); };
 const check = (cond, msg) => (cond ? ok(msg) : fail(msg));
+const note = (msg) => console.log(`note  ${msg}`);   // observed, not gated
 
 const manifest = JSON.parse(await readFile(path.join(siteDir, "samples", "manifest.json"), "utf8"));
 const compiler = await WebAssembly.compile(await readFile(path.join(siteDir, "lib", "spinel.wasm")));
@@ -88,6 +89,15 @@ for (const s of manifest) {
     const sw = r.codegen.filter((d) => d.kind === "CallNode" && d.dispatch === "switch").map((d) => d.name);
     check(sw.includes("dist2"), `point: codegen reports dist2 dispatched through a switch (${sw.join(", ")})`);
     check(r.codegen.some((d) => d.kind === "BlockNode" && d.inlined === true), "point: codegen reports an inlined block");
+    const def = r.types.find((d) => d.kind === "DefNode" && d.name === "dist2");
+    check(def?.owner === "Point" && def?.signature === "(untyped) -> Integer" && def?.widened === true,
+      `point: the def carries its owner and signature (${def ? `${def.owner} ${def.signature} widened=${def.widened}` : "no DefNode"})`);
+    // matz/spinel 26320875 lets one run write the JSON and the C (--emit-types
+    // -S). Not adopted yet: --emit-types forces SPINEL_DEBUG, so the C is the
+    // debug compile's (no static/always_inline, backtraces on), not the C
+    // this page shows and builds. Reported; this line says when it changes.
+    const one = await runWasi(compiler, "spinel", [s.file, "--emit-types", "-o", "main.json", "-S"], { packages, lib: { "libspinel_rt.a": new Uint8Array([0]) }, [s.file]: sources[s.name] });
+    note(`point: --emit-types -S in one run ${one.rc === 0 && one.stdout === r.c ? "matches -S: analyze() could drop a pass" : "still emits the debug compile's C: analyze() keeps its -S pass"}`);
   }
 }
 

@@ -47,6 +47,7 @@ const mcpSession = [
   { jsonrpc: "2.0", id: 10, method: "tools/call", params: { name: "slow_sites", arguments: { file: "samples/point.rb" } } },
   { jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "definition", arguments: { file: "samples/point.rb", line: PUTS_LINE, column: DIST2_COL } } },
   { jsonrpc: "2.0", id: 12, method: "tools/call", params: { name: "references", arguments: { file: "samples/point.rb", line: PUTS_LINE, column: 5 } } },
+  { jsonrpc: "2.0", id: 13, method: "tools/call", params: { name: "type_at", arguments: { file: "samples/point.rb", line: DEF_LINE, column: 6 } } },
 ];
 const MCP_RESPONSES = mcpSession.filter((m) => m.id != null).length;
 
@@ -76,7 +77,8 @@ function checkMcp(label, r) {
   check(/`pts`: Array\[untyped\]/.test(text(by[8])) && /enclosing: map -> Array\[Integer\], inspect -> String/.test(text(by[8])), `${label}: type_at on a call chain gives the tightest node and its enclosing calls`);
   check(by[9].result?.isError === true && /no such file/.test(text(by[9])), `${label}: a missing file is a tool error`);
   check(/`dist2` -> switch/.test(text(by[10])), `${label}: slow_sites lists dist2 as a switch`);
-  check(/DefNode `dist2`/.test(text(by[11])), `${label}: definition of the dist2 call is its def`);
+  check(/def `Point#dist2`: \(untyped\) -> Integer  \[slow/.test(text(by[11])), `${label}: definition of the dist2 call is its def, with its signature (${text(by[11])})`);
+  check(/`Point#dist2`: \(untyped\) -> Integer/.test(text(by[13])), `${label}: type_at on a def is its signature (${text(by[13]).split("\n")[0]})`);
   check(text(by[12]).split("\n").length === 3 && /LocalVariableWriteNode/.test(text(by[12])), `${label}: references of pts are its write and two reads`);
 }
 
@@ -109,6 +111,7 @@ async function runLsp(cmd, args) {
   out.def = (await c.request("textDocument/definition", { textDocument: { uri }, position: { line: pl, character: dcol } })).result;
   out.refs = (await c.request("textDocument/references", { textDocument: { uri }, position: { line: pl, character: 5 }, context: { includeDeclaration: true } })).result;
   out.hoverCall = (await c.request("textDocument/hover", { textDocument: { uri }, position: { line: pl, character: dcol } })).result;
+  out.hoverDef = (await c.request("textDocument/hover", { textDocument: { uri }, position: { line: l, character: 6 } })).result;
   // An edit that widens @y to Float: diagnostics come back for the new text.
   c.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: src.replace("i * 2", "i * 2.5") }] });
   out.diags2 = (await c.next()).params;
@@ -133,6 +136,7 @@ function checkLsp(label, o) {
   check(o.def?.range?.start?.line === DEF_LINE - 1 && o.def?.range?.start?.character === 2, `${label}: definition of the dist2 call -> ${JSON.stringify(o.def?.range?.start)}`);
   check(o.refs?.length === 3, `${label}: references of pts -> ${o.refs?.length}`);
   check(/dispatch of `dist2`: switch/.test(o.hoverCall?.contents?.value || ""), `${label}: hover on the call shows its dispatch`);
+  check(/\*\*Point#dist2\*\* — `\(untyped\) -> Integer`/.test(o.hoverDef?.contents?.value || ""), `${label}: hover on the def shows its signature (${(o.hoverDef?.contents?.value || "none").split("\n")[0]})`);
   check(!o.stderr, `${label}: no stderr${o.stderr ? ": " + o.stderr.slice(0, 200) : ""}`);
 }
 

@@ -61,6 +61,9 @@ export const text = (bytes) => (bytes ? dec.decode(bytes) : null);
 // diagnostics (refusals as errors, widenings as warnings), the inferred RBS,
 // and the emitted C. Three spinel invocations; each is independent, so a
 // refusal that stops -S (nothing written) still leaves types and RBS.
+// (--emit-types -S, matz/spinel 26320875, would fold the C into the first
+// run, but that run's C is the debug compile's: --emit-types sets
+// SPINEL_DEBUG, which codegen also reads. See the README's status list.)
 //
 // opts.packages: a tree of the bundled packages' Ruby sources
 // (packages/<name>/...), so `require "json"` resolves. The compiler looks

@@ -18,9 +18,11 @@
 # slot per warning, and codegen's decision per call and block, so hover
 # shows the expression under the cursor and its dispatch, a widening marks
 # its parameter, and go-to-definition and references resolve through the
-# compiler's own tree; with an older spinel, hover falls back to the word
-# under the cursor. Columns are treated as characters (UTF-16 units and
-# bytes agree for ASCII).
+# compiler's own tree; since 62a176b1 a def's record carries its owner and
+# signature, which places the inlay hints and lenses. With an older spinel,
+# hover falls back to the word under the cursor and no signatures are
+# placed. Columns are treated as characters (UTF-16 units and bytes agree
+# for ASCII).
 #
 # SPINEL_LSP_LOG=<path> appends one line per message in and out (method,
 # id, and for an analysis its timing and counts): what to attach to a
@@ -273,13 +275,13 @@ module SpinelLSP
       snap = @snaps[uri]
       return [] if snap.nil?
       hints = []
-      each_def(@docs[uri].to_s, snap) do |line0, end_col, sig|
+      each_def(@docs[uri].to_s, snap) do |line0, end_col, d|
         hints << {
           "position" => { "line" => line0, "character" => end_col },
-          "label" => " : #{sig['signature']}",
+          "label" => " : #{d['signature']}",
           "kind" => 1,
           "paddingLeft" => true,
-          "tooltip" => sig["slow"] ? "slow path: #{sig['note']}" : "fast path: every slot typed",
+          "tooltip" => d["widened"] ? "slow path: a slot widened to untyped" : "fast path: every slot typed",
         }
       end
       hints
@@ -290,37 +292,27 @@ module SpinelLSP
       snap = @snaps[uri]
       return [] if snap.nil?
       lenses = []
-      each_def(@docs[uri].to_s, snap) do |line0, _end_col, sig|
-        title = sig["slow"] ? "slow path: #{sig['note']}" : "fast path"
+      each_def(@docs[uri].to_s, snap) do |line0, _end_col, d|
+        title = d["widened"] ? "slow path: a slot widened to untyped" : "fast path"
         lenses << { "range" => range(line0, 0, line0, 0), "command" => { "title" => title, "command" => "" } }
       end
       lenses
     end
 
-    # Pair each `def` line in the text with its signature record, matched by
-    # method name inside the enclosing class: the nearest `class`/`module`
-    # line above it with less indentation (--emit-types does not say where
-    # a def is, so this is a text scan that assumes conventional layout).
-    # Yields (0-based line, column after the parameter list, signature).
+    # Each def the compiler placed in this document, with where its head
+    # ends: the DefNode record says the def's span, owner and signature
+    # (spinel 62a176b1), and the def's own line says where its parameter
+    # list closes. Yields (0-based line, column after the head, record).
+    # Nothing with an older spinel, which places no signatures.
     def each_def(text, snap)
-      sigs = snap.signatures.select { |s| s["method"] }
       lines = text.split("\n", -1)
-      lines.each_with_index do |raw, i|
-        next unless raw =~ /\A(\s*)def\s+(self\.)?([a-zA-Z_]\w*[?!=]?)(\s*\([^)]*\))?/
-        indent = $1.length
-        name = ($2 ? "self." : "") + $3
-        head_end = $~.end(0)
-        cls = "Object"
-        j = i - 1
-        while j >= 0
-          if lines[j] =~ /\A(\s*)(class|module)\s+([A-Z][\w:]*)/ && $1.length < indent
-            cls = $3
-            break
-          end
-          j -= 1
-        end
-        sig = sigs.find { |s| s["method"] == name && s["class"] == cls } || sigs.find { |s| s["method"] == name }
-        yield i, head_end, sig if sig
+      snap.defs.each do |d|
+        next unless File.basename(d["file"].to_s) == File.basename(snap.entry)
+        line0 = d["line"] - 1
+        raw = lines[line0]
+        next if raw.nil?
+        head_end = raw =~ /def\s+(self\.)?#{Regexp.escape(d['name'].to_s)}(\s*\([^)]*\))?/ ? $~.end(0) : raw.length
+        yield line0, head_end, d
       end
     end
 
