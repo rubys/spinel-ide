@@ -161,7 +161,7 @@ compiler's side and merged
    value that widened the slot to the expression the untyped was born
    at, one hop per record — on the `point` sample, `o` was *passed
    `pts[0]`, untyped, from `(1..5).map { |i| Point.new(i, i * 2) }`,
-   `Array[untyped]` — born here: no untyped input*. The LSP publishes the
+   `Array[untyped]` -- born here: no untyped input*. The LSP publishes the
    hops as the warning's `relatedInformation` (an editor lists them under
    it, each a click away), the MCP prints them under each widening in
    `diagnostics`, and the page shows them under the marker and in the
