@@ -9,10 +9,12 @@
 # Makefile builds the *runtime* for wasm (`make wasm-rt`); the compiler is
 # not a target upstream, so this script compiles src/ + prism + the regexp
 # engine with the same flags the Makefile's WASI_CFLAGS use, against
-# spinel's lib/wasi shim. The two additions the compiler needs beyond the
-# shim: `-Wno-implicit-function-declaration` (recent clang rejects the
-# handful of declared-after-use functions in src/) and a `system()` stub
-# (main.c's invoke-cc path; the shim covers popen but not system).
+# spinel's lib/wasi shim. The additions the compiler needs beyond the shim:
+# `-Wno-implicit-function-declaration` (recent clang rejects the handful of
+# declared-after-use functions in src/) and stubs for the process calls
+# main.c makes that the shim declares but does not define: `system()` (the
+# invoke-cc path) and `execv()` (`spinel diff`, matz/spinel 64cd200e). The
+# stubs are weak, so a shim that grows a definition wins the link.
 set -euo pipefail
 
 SPINEL=${1:?spinel checkout}
@@ -47,8 +49,12 @@ for f in lib/regexp/*.c; do
   "$CLANG" "${CF[@]}" -Ilib/regexp -c "$f" -o "$OBJ/re_$(basename "$f" .c).o"
 done
 "$CLANG" "${CF[@]}" -c lib/wasi/sp_wasi.c -o "$OBJ/sp_wasi.o"
-printf '#include <errno.h>\nint system(const char *c) { (void)c; errno = ENOSYS; return -1; }\n' > "$OBJ/system_stub.c"
-"$CLANG" -O2 -c "$OBJ/system_stub.c" -o "$OBJ/system_stub.o"
+cat > "$OBJ/process_stubs.c" <<'STUBS'
+#include <errno.h>
+__attribute__((weak)) int system(const char *c) { (void)c; errno = ENOSYS; return -1; }
+__attribute__((weak)) int execv(const char *p, char *const a[]) { (void)p; (void)a; errno = ENOSYS; return -1; }
+STUBS
+"$CLANG" -O2 -c "$OBJ/process_stubs.c" -o "$OBJ/process_stubs.o"
 
 # 16 MB stack: the parser's AST flattening is recursive and the 64 KB
 # default overflows on ordinary programs.

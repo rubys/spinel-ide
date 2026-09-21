@@ -283,7 +283,9 @@ The footer of the page names the spinel commit it was built from.
 
 Built, not committed: `lib/spinel.wasm`, `lib/clang/` (the toolchain, from
 the npm tarball pinned in `scripts/build-site.sh`), `lib/rt.tar`,
-`lib/pkg.tar`, `samples/*.wasm`, `samples/*.out`, `version.json`.
+`lib/pkg.tar` (the Ruby sources the compiler reads beside its `lib/`: the
+bundled packages' and `builtins/`, the core methods written in Ruby that the
+parser splices in), `samples/*.wasm`, `samples/*.out`, `version.json`.
 
 ## Running locally
 

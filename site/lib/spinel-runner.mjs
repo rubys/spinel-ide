@@ -64,14 +64,16 @@ export const text = (bytes) => (bytes ? dec.decode(bytes) : null);
 // 26320875 and #4555; a refusal exits 1 with the refusals in the JSON and
 // no C), and --emit-rbs writes the signatures document the RBS tab shows.
 //
-// opts.packages: a tree of the bundled packages' Ruby sources
-// (packages/<name>/...), so `require "json"` resolves. The compiler looks
-// for them beside its lib/, found through lib/libspinel_rt.a existing next
-// to argv[0]; a placeholder for that file is enough for the lookup.
+// opts.sources: the tree the compiler reads beside its lib/ (pkg.tar
+// untarred): packages/<name>/... so `require "json"` resolves, and
+// builtins/enumerable.rb, spliced ahead of a program that calls an
+// Enumerable method (matz/spinel 1a492ebb; the compiler exits 1 without
+// it). The compiler finds that root through lib/libspinel_rt.a existing
+// next to argv[0]; a placeholder for that file is enough for the lookup.
 export async function analyze(module, source, opts = {}) {
   const name = opts.name || "main.rb";
-  const base = opts.packages
-    ? { packages: opts.packages, lib: { "libspinel_rt.a": new Uint8Array([0]) } }
+  const base = opts.sources
+    ? { ...opts.sources, lib: { "libspinel_rt.a": new Uint8Array([0]) } }
     : {};
   const t0 = performance.now();
   const types = await runWasi(module, "spinel", [name, "--emit-types", "-o", "main.json", "-S"], { ...base, [name]: source });

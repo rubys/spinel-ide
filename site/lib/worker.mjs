@@ -7,7 +7,7 @@ import { analyze, runWasi } from "./spinel-runner.mjs";
 import { untar } from "./clang-runner.mjs";
 
 let modulePromise = null;   // spinel.wasm
-let packagesPromise = null; // the bundled packages' Ruby sources (pkg.tar)
+let sourcesPromise = null;  // the Ruby sources beside the compiler's lib/ (pkg.tar: packages/, builtins/)
 const programs = new Map(); // url -> compiled program module (Run button)
 
 self.onmessage = async (e) => {
@@ -18,10 +18,10 @@ self.onmessage = async (e) => {
         if (!r.ok) throw new Error(`spinel.wasm: ${r.status}`);
         return WebAssembly.compileStreaming(r);
       });
-      packagesPromise = args.pkgTarUrl
-        ? fetch(args.pkgTarUrl).then((r) => { if (!r.ok) throw new Error(`pkg.tar: ${r.status}`); return r.arrayBuffer(); }).then((b) => untar(b).packages ?? {})
+      sourcesPromise = args.pkgTarUrl
+        ? fetch(args.pkgTarUrl).then((r) => { if (!r.ok) throw new Error(`pkg.tar: ${r.status}`); return r.arrayBuffer(); }).then(untar)
         : Promise.resolve(null);
-      await Promise.all([modulePromise, packagesPromise]);
+      await Promise.all([modulePromise, sourcesPromise]);
       self.postMessage({ id, result: true });
       return;
     }
@@ -31,7 +31,7 @@ self.onmessage = async (e) => {
       const r = await runWasi(mod, "spinel", ["--version"]);
       self.postMessage({ id, result: r.stdout.trim() });
     } else if (op === "analyze") {
-      self.postMessage({ id, result: await analyze(mod, args.source, { name: args.name, packages: await packagesPromise }) });
+      self.postMessage({ id, result: await analyze(mod, args.source, { name: args.name, sources: await sourcesPromise }) });
     } else if (op === "run") {
       // A precompiled sample program: fetched once, instantiated per run.
       let pm = programs.get(args.wasmUrl);

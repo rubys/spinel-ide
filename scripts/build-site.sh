@@ -16,8 +16,10 @@
 # - lib/rt.tar: what that toolchain needs from the checkout: the runtime
 #   headers, lib/wasi/, lib/wasm32-wasi/libspinel_rt.a and the bundled
 #   packages' sp_*_wasi.o
-# - lib/pkg.tar: the bundled packages' Ruby sources, for the analyzer's
-#   `require`
+# - lib/pkg.tar: the Ruby sources the compiler reads beside its lib/: the
+#   bundled packages' (the analyzer's `require`) and builtins/ (Enumerable
+#   in Ruby, spliced into every program that calls one; matz/spinel
+#   1a492ebb)
 # - version.json: the spinel commit, toolchain and build time the page shows
 #
 # Needs: the checkout built (`make deps && make && make wasm-rt`) and the
@@ -89,9 +91,11 @@ echo "toolchain @yowasp/clang $YOWASP_CLANG_VERSION ($(du -sh "$OUT/lib/clang" |
 (cd "$SPINEL" && find lib -name '*.h' -not -path 'lib/wasm32-wasi/*' ; find lib/wasi -type f; echo lib/wasm32-wasi/libspinel_rt.a; ls packages/*/sp_*_wasi.o) \
   | sort -u | (cd "$SPINEL" && tar --format=ustar -cf "$OUT/lib/rt.tar" -T -)
 echo "rt.tar: $(tar tf "$OUT/lib/rt.tar" | wc -l | tr -d ' ') files ($(du -sh "$OUT/lib/rt.tar" | cut -f1))"
-# The bundled packages' Ruby sources, for the analyzer: `require "json"`
-# resolves to packages/json/json.rb beside the compiler's lib/.
-(cd "$SPINEL" && find packages -name '*.rb' -not -path '*/test/*'; ls packages/*/spin.toml) \
+# The Ruby sources the compiler reads beside its lib/: `require "json"`
+# resolves to packages/json/json.rb, and builtins/enumerable.rb is spliced
+# ahead of a program that calls an Enumerable method (a compiler that
+# cannot find it exits 1).
+(cd "$SPINEL" && find packages -name '*.rb' -not -path '*/test/*'; ls packages/*/spin.toml; find builtins -name '*.rb') \
   | sort -u | (cd "$SPINEL" && tar --format=ustar -cf "$OUT/lib/pkg.tar" -T -)
 echo "pkg.tar: $(tar tf "$OUT/lib/pkg.tar" | wc -l | tr -d ' ') files ($(du -sh "$OUT/lib/pkg.tar" | cut -f1))"
 

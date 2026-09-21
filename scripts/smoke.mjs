@@ -33,7 +33,7 @@ const lib = (f) => pathToFileURL(path.join(siteDir, "lib", f)).href;
 const { runWasi, analyze, text } = await import(lib("spinel-runner.mjs"));
 const { typesAtWord, hoverAt, spansAt } = await import(lib("editor.js"));
 const { loadToolchain, untar } = await import(lib("clang-runner.mjs"));
-const packages = untar(await readFile(path.join(siteDir, "lib", "pkg.tar"))).packages ?? {};
+const beside = untar(await readFile(path.join(siteDir, "lib", "pkg.tar")));   // packages/ and builtins/, beside the compiler's lib/
 
 let failures = 0;
 const ok = (msg) => console.log(`  ok  ${msg}`);
@@ -53,7 +53,9 @@ const plainC = {};   // each sample's `-S` alone, for the analyze() check below
 for (const s of manifest) {
   const src = await readFile(path.join(siteDir, "samples", s.file), "utf8");
   sources[s.name] = src;
-  const wasmC = await runWasi(compiler, "spinel", [s.file, "-S"], { [s.file]: src });
+  // The same root analyze() mounts: builtins/enumerable.rb is spliced by
+  // the parser, and the compiler exits 1 when it cannot find the file.
+  const wasmC = await runWasi(compiler, "spinel", [s.file, "-S"], { ...beside, lib: { "libspinel_rt.a": new Uint8Array([0]) }, [s.file]: src });
   plainC[s.name] = wasmC.rc === 0 ? wasmC.stdout : "";
   let nativeC = "", nativeRc = 0;
   try {
@@ -63,13 +65,17 @@ for (const s of manifest) {
   if (nativeRc !== 0 || wasmC.rc !== 0) {
     check(nativeRc !== 0 && wasmC.rc !== 0, `${s.name}: -S refused on both (native rc=${nativeRc}, wasm rc=${wasmC.rc})`);
   } else {
-    check(wasmC.stdout === nativeC, `${s.name}: wasm -S is byte-identical to native --target=wasm32-wasi -S (${nativeC.length} bytes)`);
+    // The spliced builtins/enumerable.rb carries its #line path as each
+    // compiler found it (<exe>/../builtins/... natively, ./builtins/... in
+    // the tab); the sample's own path agrees by the cwd above.
+    const builtinsLine = (c) => c.replace(/^(#line \d+ ")\S*\/builtins\//gm, "$1builtins/");
+    check(builtinsLine(wasmC.stdout) === builtinsLine(nativeC), `${s.name}: wasm -S is byte-identical to native --target=wasm32-wasi -S (${nativeC.length} bytes)`);
   }
 }
 
 // 2. --emit-types
 for (const s of manifest) {
-  const r = await analyze(compiler, sources[s.name], { name: s.file, packages });
+  const r = await analyze(compiler, sources[s.name], { name: s.file, sources: beside });
   const errs = r.diagnostics.filter((d) => d.severity === "error");
   const warns = r.diagnostics.filter((d) => d.severity === "warning");
   check(r.types.length > 0, `${s.name}: --emit-types typed ${r.types.length} nodes in ${r.elapsed_ms} ms`);
@@ -119,7 +125,7 @@ for (const s of manifest) {
 
 // 4. hover resolution over real output: the tightest span, its chain, the dispatch
 {
-  const r = await analyze(compiler, sources.point, { name: "point.rb", packages });
+  const r = await analyze(compiler, sources.point, { name: "point.rb", sources: beside });
   const lines = sources.point.split("\n");
   const dl = lines.findIndex((l) => /def dist2/.test(l)) + 1;
   const xc = lines[dl - 1].indexOf("@x") + 1;
@@ -152,7 +158,7 @@ for (const s of manifest) {
   } catch (e) { fail(`toolchain failed to load: ${e.message}`); }
   if (tc) {
     const edited = sources.hello.replace('"hello"', '"edited"');
-    const a = await analyze(compiler, edited, { name: "hello.rb", packages });
+    const a = await analyze(compiler, edited, { name: "hello.rb", sources: beside });
     check(a.c.length > 0, "edited hello: C emitted");
     const b = await tc.compile(a.c, { name: "hello" });
     check(b.wasm && b.rc === 0, `edited hello: compiled in ${b.elapsed_ms} ms${b.wasm ? ` (${b.wasm.length} bytes)` : `: ${b.stderr.slice(0, 300)}`}`);
@@ -160,7 +166,7 @@ for (const s of manifest) {
       const r = await runWasi(await WebAssembly.compile(b.wasm), "hello", [], {}, []);
       check(r.rc === 0 && r.stdout === "edited 12\n", `edited hello runs: ${JSON.stringify(r.stdout)}${r.stderr ? " stderr: " + r.stderr.slice(0, 200) : ""}`);
     }
-    const j = await analyze(compiler, 'require "json"\nputs JSON.generate({ "a" => [1, 2.5, nil] })\n', { name: "j.rb", packages });
+    const j = await analyze(compiler, 'require "json"\nputs JSON.generate({ "a" => [1, 2.5, nil] })\n', { name: "j.rb", sources: beside });
     check(j.c.length > 0 && !j.diagnostics.some((d) => d.severity === "error"), `require "json" resolves in the analyzer (${j.diagnostics.map((d) => d.message.slice(0, 60)).join("; ") || "no diagnostics"})`);
     const jb = await tc.compile(j.c, { name: "j" });
     check(jb.wasm && jb.rc === 0, `require "json" program: linked${jb.wasm ? "" : `: ${jb.stderr.slice(0, 300)}`}`);
