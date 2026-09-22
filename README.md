@@ -238,6 +238,26 @@ exactly the kind of report that turns into a field in `--emit-types`.
   `note:` lines under `--warn-widen` and as `why` on the `--emit-types`
   record; merged after a cost review (the origin is derived only when a
   consumer asks). Consumed here, see 8 above.
+- [matz/spinel#4702](https://github.com/matz/spinel/pull/4702) and
+  [matz/spinel#4805](https://github.com/matz/spinel/pull/4805) — the
+  wasm32-wasi shim defines what its own headers declare: `execv`, then
+  `getrlimit` and `getnameinfo`. One shape twice — `lib/wasi/*.h` declares
+  a POSIX call, `sp_wasi.c` never defines it, and nothing notices until
+  something first calls it, which `docs/wasm.md`'s own invariant forbids
+  ("never as a link error"). The second stopped *every*
+  `--target=wasm32-wasi` link, not just this repository's. Found by the
+  tracking build below; both merged the same day.
+- [matz/spinel#4807](https://github.com/matz/spinel/issues/4807) — why
+  that class was invisible upstream: no CI lane built for the target,
+  though `docs/wasm.md` documents it and `make wasm-test` already built
+  seven corpus programs for it. Of the three sizes offered, matz took the
+  smallest and wrote it himself
+  ([#4808](https://github.com/matz/spinel/pull/4808)): the wasi-sdk cached
+  by version, wasmtime from its release tarball, and
+  `WASM_ENGINE_REQUIRED=1` so a missing engine fails instead of skipping
+  silently. The lane passes in about two minutes, inside the range of the
+  lanes already there. The build below is no longer the only thing
+  watching that target.
 
 ## It tracks spinel master
 
@@ -302,8 +322,11 @@ open http://localhost:8099/ide/
 
 ## What it does not do yet
 
-- Completion, rename, `why` a slot widened: see "What the compiler says,
-  and what it doesn't yet" above.
+- Completion: member tables would be the next ask, see "What the compiler
+  says, and what it doesn't yet" above. Rename: nothing resolves a name to
+  its definition sites yet. (*Why* a slot widened used to sit here; it
+  landed in matz/spinel#4562 and the page, the LSP and the MCP all show
+  the chain now — see 8 above.)
 - Programs larger than a benchmark: a whole-app compile belongs in the
   native compiler, not a tab.
 - `Fiber`, `Thread`, sockets, processes: what the wasm32-wasi target does

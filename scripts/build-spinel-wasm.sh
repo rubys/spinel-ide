@@ -12,9 +12,12 @@
 # spinel's lib/wasi shim. The additions the compiler needs beyond the shim:
 # `-Wno-implicit-function-declaration` (recent clang rejects the handful of
 # declared-after-use functions in src/) and stubs for the process calls
-# main.c makes that the shim declares but does not define: `system()` (the
-# invoke-cc path) and `execv()` (`spinel diff`, matz/spinel 64cd200e). The
-# stubs are weak, so a shim that grows a definition wins the link.
+# main.c makes that the shim does not define: `system()` (the invoke-cc
+# path) and `execv()` (`spinel diff`, matz/spinel 64cd200e). Both stubs are
+# weak, so a shim that defines one wins the link -- which is now the case
+# for `execv` (matz/spinel#4702), leaving that stub to matter only when
+# this script is pointed at a checkout older than it. `system()` the shim
+# still does not define.
 set -euo pipefail
 
 SPINEL=${1:?spinel checkout}
