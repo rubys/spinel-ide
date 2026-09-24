@@ -17,7 +17,11 @@
 # weak, so a shim that defines one wins the link -- which is now the case
 # for `execv` (matz/spinel#4702), leaving that stub to matter only when
 # this script is pointed at a checkout older than it. `system()` the shim
-# still does not define.
+# still does not define. `mkdtemp()` (--jobs=N's split build, matz/spinel
+# fcf04187) is not a process call but the same kind of gap: wasi-libc
+# declares it and does not define it. Failing it makes the split build fall
+# back to the single unit, which in the browser reaches the `system()` stub
+# anyway.
 set -euo pipefail
 
 SPINEL=${1:?spinel checkout}
@@ -56,6 +60,7 @@ cat > "$OBJ/process_stubs.c" <<'STUBS'
 #include <errno.h>
 __attribute__((weak)) int system(const char *c) { (void)c; errno = ENOSYS; return -1; }
 __attribute__((weak)) int execv(const char *p, char *const a[]) { (void)p; (void)a; errno = ENOSYS; return -1; }
+__attribute__((weak)) char *mkdtemp(char *t) { (void)t; errno = ENOSYS; return 0; }
 STUBS
 "$CLANG" -O2 -c "$OBJ/process_stubs.c" -o "$OBJ/process_stubs.o"
 
