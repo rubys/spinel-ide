@@ -9,7 +9,10 @@
 # Makefile builds the *runtime* for wasm (`make wasm-rt`); the compiler is
 # not a target upstream, so this script compiles src/ + prism + the regexp
 # engine with the same flags the Makefile's WASI_CFLAGS use, against
-# spinel's lib/wasi shim. The additions the compiler needs beyond the shim:
+# spinel's lib/wasi shim. The engine is mruby-regexp behind an mruby API
+# shim (matz/spinel d2cee3bf), so it and src/re_lit_check.c -- the
+# compiler's build-time check of a regexp literal -- need
+# -Ilib/regexp/shim for <mruby.h>. The additions the compiler needs beyond the shim:
 # `-Wno-implicit-function-declaration` (recent clang rejects the handful of
 # declared-after-use functions in src/) and stubs for the process calls
 # main.c makes that the shim does not define: `system()` (the invoke-cc
@@ -46,14 +49,14 @@ CF=(-O2 -std=gnu11 -w -Wno-implicit-function-declaration
 cd "$SPINEL"
 for f in src/*.c; do
   case "$f" in src/spinel_parse.c) continue;; esac
-  "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ibuild/csrc -Isrc -Ilib -Ilib/regexp -c "$f" -o "$OBJ/$(basename "$f" .c).o"
+  "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ibuild/csrc -Isrc -Ilib -Ilib/regexp -Ilib/regexp/shim -c "$f" -o "$OBJ/$(basename "$f" .c).o"
 done
 "$CLANG" "${CF[@]}" -Ivendor/prism/include -c src/spinel_parse.c -o "$OBJ/sp_parse_lib.o"
 for f in vendor/prism/src/*.c vendor/prism/src/util/*.c; do
   "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ivendor/prism/src -c "$f" -o "$OBJ/prism_$(basename "$f" .c).o"
 done
 for f in lib/regexp/*.c; do
-  "$CLANG" "${CF[@]}" -Ilib/regexp -c "$f" -o "$OBJ/re_$(basename "$f" .c).o"
+  "$CLANG" "${CF[@]}" -Ilib/regexp -Ilib/regexp/shim -c "$f" -o "$OBJ/re_$(basename "$f" .c).o"
 done
 "$CLANG" "${CF[@]}" -c lib/wasi/sp_wasi.c -o "$OBJ/sp_wasi.o"
 cat > "$OBJ/process_stubs.c" <<'STUBS'
