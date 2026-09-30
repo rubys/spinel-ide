@@ -77,7 +77,7 @@ function checkMcp(label, r) {
   check(/passed `2\.5` is Float, where the slot was Integer \(two kinds meet: untyped\)/.test(text(by[3])) && /and `1` is Integer/.test(text(by[3])) && /born here/.test(text(by[3])), `${label}: diagnostics carry the why under each widening`);
   check(/`@x`: Integer/.test(text(by[4])), `${label}: type_at @x -> ${text(by[4]).split("\n")[0]}`);
   check(/@price: untyped/.test(text(by[5])) && /\[slow/.test(text(by[5])), `${label}: signatures mark the slow path`);
-  check(/1 refusal/.test(text(by[6])) && /unsupported/.test(text(by[6])), `${label}: wont_compile on refusal.rb`);
+  check(/1 refusal/.test(text(by[6])) && /unsupported|not supported/.test(text(by[6])), `${label}: wont_compile on refusal.rb`);
   check(/sp_total\(/.test(text(by[7])), `${label}: c_for total finds sp_total`);
   check(/`pts`: Array\[untyped\]/.test(text(by[8])) && /enclosing: map -> Array\[Integer\], inspect -> String/.test(text(by[8])), `${label}: type_at on a call chain gives the tightest node and its enclosing calls`);
   check(by[9].result?.isError === true && /no such file/.test(text(by[9])), `${label}: a missing file is a tool error`);

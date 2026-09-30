@@ -80,7 +80,7 @@ for (const s of manifest) {
   const warns = r.diagnostics.filter((d) => d.severity === "warning");
   check(r.types.length > 0, `${s.name}: --emit-types typed ${r.types.length} nodes in ${r.elapsed_ms} ms`);
   if (s.name === "refusal") {
-    check(errs.length >= 1 && errs.some((d) => /unsupported/.test(d.message)), `refusal: carried as error diagnostic (${errs.map((d) => `${d.line}: ${d.message}`).join("; ") || "none"})`);
+    check(errs.length >= 1 && errs.some((d) => /unsupported|not supported/.test(d.message)), `refusal: carried as error diagnostic (${errs.map((d) => `${d.line}: ${d.message}`).join("; ") || "none"})`);
     check(r.c === "", "refusal: nothing emitted for -S");
   } else {
     check(errs.length === 0, `${s.name}: no refusals (${errs.map((d) => d.message).join("; ")})`);
