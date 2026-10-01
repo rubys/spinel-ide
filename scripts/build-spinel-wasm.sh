@@ -47,8 +47,12 @@ CF=(-O2 -std=gnu11 -w -Wno-implicit-function-declaration
     -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false)
 
 cd "$SPINEL"
+# A src/*.c that another source #includes (sp_macro.c, inside spinel_parse.c)
+# is a fragment, not a translation unit; the Makefile lists it only as a dependency.
+FRAGMENTS=" $(grep -ho '^#include "[A-Za-z0-9_]*\.c"' src/*.c src/*.h | sed 's/.*"\(.*\)"/src\/\1/' | tr '\n' ' ') "
 for f in src/*.c; do
   case "$f" in src/spinel_parse.c) continue;; esac
+  case "$FRAGMENTS" in *" $f "*) continue;; esac
   "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ibuild/csrc -Isrc -Ilib -Ilib/regexp -Ilib/regexp/shim -c "$f" -o "$OBJ/$(basename "$f" .c).o"
 done
 "$CLANG" "${CF[@]}" -Ivendor/prism/include -c src/spinel_parse.c -o "$OBJ/sp_parse_lib.o"
