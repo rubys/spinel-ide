@@ -47,15 +47,26 @@ CF=(-O2 -std=gnu11 -w -Wno-implicit-function-declaration
     -mllvm -wasm-enable-sjlj -mllvm -wasm-use-legacy-eh=false)
 
 cd "$SPINEL"
+# Inline RBS comments (matz/spinel 407f0e41) are read with the rbs gem's C
+# parser, which `make deps` vendors; the Makefile builds src/rbs_map.c and
+# defines SPINEL_INLINE_RBS for the parser only when it is there, and so do we.
+RBS_CF=()
+if [ -f vendor/rbs/include/rbs/parser.h ]; then
+  RBS_CF=(-DSPINEL_INLINE_RBS -Ivendor/rbs/include)
+  for f in vendor/rbs/src/*.c vendor/rbs/src/util/*.c; do
+    "$CLANG" "${CF[@]}" -Ivendor/rbs/include -Ivendor/rbs/src -c "$f" -o "$OBJ/rbs_$(basename "$f" .c).o"
+  done
+fi
 # A src/*.c that another source #includes (sp_macro.c, inside spinel_parse.c)
 # is a fragment, not a translation unit; the Makefile lists it only as a dependency.
 FRAGMENTS=" $(grep -ho '^#include "[A-Za-z0-9_]*\.c"' src/*.c src/*.h | sed 's/.*"\(.*\)"/src\/\1/' | tr '\n' ' ') "
 for f in src/*.c; do
   case "$f" in src/spinel_parse.c) continue;; esac
+  case "$f" in src/rbs_map.c) [ ${#RBS_CF[@]} -gt 0 ] || continue;; esac
   case "$FRAGMENTS" in *" $f "*) continue;; esac
-  "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ibuild/csrc -Isrc -Ilib -Ilib/regexp -Ilib/regexp/shim -c "$f" -o "$OBJ/$(basename "$f" .c).o"
+  "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ibuild/csrc -Isrc -Ilib -Ilib/regexp -Ilib/regexp/shim ${RBS_CF[@]+"${RBS_CF[@]}"} -c "$f" -o "$OBJ/$(basename "$f" .c).o"
 done
-"$CLANG" "${CF[@]}" -Ivendor/prism/include -c src/spinel_parse.c -o "$OBJ/sp_parse_lib.o"
+"$CLANG" "${CF[@]}" -Ivendor/prism/include ${RBS_CF[@]+"${RBS_CF[@]}"} -c src/spinel_parse.c -o "$OBJ/sp_parse_lib.o"
 for f in vendor/prism/src/*.c vendor/prism/src/util/*.c; do
   "$CLANG" "${CF[@]}" -Ivendor/prism/include -Ivendor/prism/src -c "$f" -o "$OBJ/prism_$(basename "$f" .c).o"
 done
