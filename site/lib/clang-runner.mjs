@@ -39,12 +39,14 @@ export function untar(bytes) {
 }
 
 // Declarations + definitions for what the toolchain's wasi-libc lacks and
-// the runtime headers call: flockfile/funlockfile (added to the single-
-// threaded libc after this libc snapshot). Force-included so the call sites
-// see the prototype (an implicit int declaration would mismatch the
-// definition's signature and trap at the call).
-const COMPAT_H = "#include <stdio.h>\nvoid flockfile(FILE *);\nvoid funlockfile(FILE *);\n";
-const COMPAT_C = '#include "compat.h"\nvoid flockfile(FILE *f) { (void)f; }\nvoid funlockfile(FILE *f) { (void)f; }\n';
+// the runtime calls: flockfile/ftrylockfile/funlockfile (added to the
+// single-threaded libc after this libc snapshot; ftrylockfile is the stack
+// overflow handler's, matz/spinel#8847, and as the lock is a no-op it is
+// always free). Force-included so the call sites see the prototype (an
+// implicit int declaration would mismatch the definition's signature and
+// trap at the call).
+const COMPAT_H = "#include <stdio.h>\nvoid flockfile(FILE *);\nint ftrylockfile(FILE *);\nvoid funlockfile(FILE *);\n";
+const COMPAT_C = '#include "compat.h"\nvoid flockfile(FILE *f) { (void)f; }\nint ftrylockfile(FILE *f) { (void)f; return 0; }\nvoid funlockfile(FILE *f) { (void)f; }\n';
 
 const CFLAGS = [
   "-O2", "-w", "-Ilib", "-Ilib/regexp", "-Ilib/wasi", "-include", "compat.h",
