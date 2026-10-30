@@ -93,7 +93,7 @@ for (const s of manifest) {
   if (s.name === "widening") {
     check(warns.some((d) => /widened to untyped/.test(d.message)), `widening: the slow-path warning is present (${warns.length} warnings)`);
     check(/untyped/.test(r.rbs), "widening: RBS shows untyped");
-    check(warns.some((d) => d.slot === "param" && d.param === "items"), `widening: the warning names its slot (${warns.map((d) => d.slot + (d.param ? ":" + d.param : "")).join(", ")})`);
+    check(warns.some((d) => d.slot === "param" && d.param === "p"), `widening: the warning names its slot (${warns.map((d) => d.slot + (d.param ? ":" + d.param : "")).join(", ")})`);
   }
   if (s.name === "point") {
     check(/@x: Integer/.test(r.rbs), `point: RBS unboxed @x as Integer`);
